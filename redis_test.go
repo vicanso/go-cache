@@ -17,7 +17,6 @@ package cache
 import (
 	"context"
 	"math/rand"
-	"os"
 	"testing"
 	"time"
 
@@ -55,12 +54,8 @@ func randomString() string {
 }
 
 func newClient() *redis.Client {
-	addr := "127.0.0.1:6379"
-	if os.Getenv("REDIS_HOST") != "" {
-		addr = os.Getenv("REDIS_HOST") + ":6379"
-	}
 	c := redis.NewClient(&redis.Options{
-		Addr: addr,
+		Addr: "localhost:6379",
 	})
 	return c
 }
