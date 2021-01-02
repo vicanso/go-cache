@@ -23,8 +23,8 @@ import (
 	"github.com/golang/snappy"
 )
 
-// redisCache redis cache
-type redisCache struct {
+// RedisCache redis cache
+type RedisCache struct {
 	client    *redis.Client
 	cluster   *redis.ClusterClient
 	ttl       time.Duration
@@ -53,27 +53,27 @@ func snappyDecode(buf []byte) ([]byte, error) {
 }
 
 // NewRedisCache create a new redis cache
-func NewRedisCache(c *redis.Client) *redisCache {
-	return &redisCache{
+func NewRedisCache(c *redis.Client) *RedisCache {
+	return &RedisCache{
 		client: c,
 	}
 }
 
 // NewRedisClusterCache create a new redis cluster cache
-func NewRedisClusterCache(c *redis.ClusterClient) *redisCache {
-	return &redisCache{
+func NewRedisClusterCache(c *redis.ClusterClient) *RedisCache {
+	return &RedisCache{
 		cluster: c,
 	}
 }
 
 // SetTTL set default ttl for cache
-func (c *redisCache) SetTTL(ttl time.Duration) *redisCache {
+func (c *RedisCache) SetTTL(ttl time.Duration) *RedisCache {
 	c.ttl = ttl
 	return c
 }
 
 // getTTL get ttl
-func (c *redisCache) getTTL(ttl ...time.Duration) time.Duration {
+func (c *RedisCache) getTTL(ttl ...time.Duration) time.Duration {
 	value := c.ttl
 	if len(ttl) != 0 {
 		value = ttl[0]
@@ -85,27 +85,27 @@ func (c *redisCache) getTTL(ttl ...time.Duration) time.Duration {
 }
 
 // SetPrefix set prefix for cache
-func (c *redisCache) SetPrefix(prefix string) *redisCache {
+func (c *RedisCache) SetPrefix(prefix string) *RedisCache {
 	c.prefix = prefix
 	return c
 }
 
 // getKey get key for cache, prefix + key
-func (c *redisCache) getKey(key string) string {
+func (c *RedisCache) getKey(key string) string {
 	return c.prefix + key
 }
 
 // SetUnmarshal set unmarshal function
-func (c *redisCache) SetUnmarshal(fn func(data []byte, v interface{}) error) {
+func (c *RedisCache) SetUnmarshal(fn func(data []byte, v interface{}) error) {
 	c.unmarshal = fn
 }
 
 // SetMarshal set marshal function
-func (c *redisCache) SetMarshal(fn func(v interface{}) ([]byte, error)) {
+func (c *RedisCache) SetMarshal(fn func(v interface{}) ([]byte, error)) {
 	c.marshal = fn
 }
 
-func (c *redisCache) lock(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+func (c *RedisCache) lock(ctx context.Context, key string, ttl time.Duration) (bool, error) {
 	if c.cluster != nil {
 		return c.cluster.SetNX(ctx, key, true, ttl).Result()
 	}
@@ -113,13 +113,13 @@ func (c *redisCache) lock(ctx context.Context, key string, ttl time.Duration) (b
 }
 
 // Lock lock the key for ttl
-func (c *redisCache) Lock(ctx context.Context, key string, ttl ...time.Duration) (bool, error) {
+func (c *RedisCache) Lock(ctx context.Context, key string, ttl ...time.Duration) (bool, error) {
 	key = c.getKey(key)
 	d := c.getTTL(ttl...)
 	return c.lock(ctx, key, d)
 }
 
-func (c *redisCache) del(ctx context.Context, key string) (count int64, err error) {
+func (c *RedisCache) del(ctx context.Context, key string) (count int64, err error) {
 	// key = c.getKey(key)
 	if c.cluster != nil {
 		return c.cluster.Del(ctx, key).Result()
@@ -128,12 +128,12 @@ func (c *redisCache) del(ctx context.Context, key string) (count int64, err erro
 }
 
 // Del delete cache
-func (c *redisCache) Del(ctx context.Context, key string) (count int64, err error) {
+func (c *RedisCache) Del(ctx context.Context, key string) (count int64, err error) {
 	return c.del(ctx, c.getKey(key))
 }
 
 // LockWithDone lock the key for ttl and return done function to delete
-func (c *redisCache) LockWithDone(ctx context.Context, key string, ttl ...time.Duration) (bool, Done, error) {
+func (c *RedisCache) LockWithDone(ctx context.Context, key string, ttl ...time.Duration) (bool, Done, error) {
 	key = c.getKey(key)
 	d := c.getTTL(ttl...)
 	success, err := c.lock(ctx, key, d)
@@ -148,7 +148,7 @@ func (c *redisCache) LockWithDone(ctx context.Context, key string, ttl ...time.D
 	return true, done, nil
 }
 
-func (c *redisCache) txPipeline() redis.Pipeliner {
+func (c *RedisCache) txPipeline() redis.Pipeliner {
 	if c.cluster != nil {
 		return c.cluster.TxPipeline()
 	}
@@ -156,7 +156,7 @@ func (c *redisCache) txPipeline() redis.Pipeliner {
 }
 
 // IncWith inc the cache
-func (c *redisCache) IncWith(ctx context.Context, key string, value int64, ttl ...time.Duration) (count int64, err error) {
+func (c *RedisCache) IncWith(ctx context.Context, key string, value int64, ttl ...time.Duration) (count int64, err error) {
 	key = c.getKey(key)
 	pipe := c.txPipeline()
 	// 保证只有首次会设置ttl
@@ -176,7 +176,7 @@ func (c *redisCache) IncWith(ctx context.Context, key string, value int64, ttl .
 }
 
 // Get get value from cache
-func (c *redisCache) get(ctx context.Context, key string) (result []byte, err error) {
+func (c *RedisCache) get(ctx context.Context, key string) (result []byte, err error) {
 	// key = c.getKey(key)
 	if c.cluster != nil {
 		return c.cluster.Get(ctx, key).Bytes()
@@ -185,12 +185,12 @@ func (c *redisCache) get(ctx context.Context, key string) (result []byte, err er
 }
 
 // Get get value from cache
-func (c *redisCache) Get(ctx context.Context, key string) (result []byte, err error) {
+func (c *RedisCache) Get(ctx context.Context, key string) (result []byte, err error) {
 	return c.get(ctx, c.getKey(key))
 }
 
 // GetIgnoreNilErr get value from cache and ignore nil err
-func (c *redisCache) GetIgnoreNilErr(ctx context.Context, key string) (result []byte, err error) {
+func (c *RedisCache) GetIgnoreNilErr(ctx context.Context, key string) (result []byte, err error) {
 	result, err = c.get(ctx, c.getKey(key))
 	if err == redis.Nil {
 		err = nil
@@ -199,7 +199,7 @@ func (c *redisCache) GetIgnoreNilErr(ctx context.Context, key string) (result []
 }
 
 // GetAndDel get value and delete it remove cache
-func (c *redisCache) GetAndDel(ctx context.Context, key string) (result []byte, err error) {
+func (c *RedisCache) GetAndDel(ctx context.Context, key string) (result []byte, err error) {
 	pipe := c.txPipeline()
 	key = c.getKey(key)
 	cmd := pipe.Get(ctx, key)
@@ -211,7 +211,7 @@ func (c *redisCache) GetAndDel(ctx context.Context, key string) (result []byte, 
 	return cmd.Bytes()
 }
 
-func (c *redisCache) set(ctx context.Context, key string, value interface{}, ttl time.Duration) (err error) {
+func (c *RedisCache) set(ctx context.Context, key string, value interface{}, ttl time.Duration) (err error) {
 	if c.cluster != nil {
 		return c.cluster.Set(ctx, key, value, ttl).Err()
 	}
@@ -219,20 +219,20 @@ func (c *redisCache) set(ctx context.Context, key string, value interface{}, ttl
 }
 
 // Set set cache
-func (c *redisCache) Set(ctx context.Context, key string, value interface{}, ttl ...time.Duration) (err error) {
+func (c *RedisCache) Set(ctx context.Context, key string, value interface{}, ttl ...time.Duration) (err error) {
 	key = c.getKey(key)
 	d := c.getTTL(ttl...)
 	return c.set(ctx, key, value, d)
 }
 
-func (c *redisCache) doUnmarshal(data []byte, value interface{}) error {
+func (c *RedisCache) doUnmarshal(data []byte, value interface{}) error {
 	if c.unmarshal != nil {
 		return c.unmarshal(data, value)
 	}
 	return json.Unmarshal(data, value)
 }
 
-func (c *redisCache) doMarshal(value interface{}) ([]byte, error) {
+func (c *RedisCache) doMarshal(value interface{}) ([]byte, error) {
 	if c.marshal != nil {
 		return c.marshal(value)
 	}
@@ -240,7 +240,7 @@ func (c *redisCache) doMarshal(value interface{}) ([]byte, error) {
 }
 
 // GetStruct get cache and unmarshal to struct
-func (c *redisCache) GetStruct(ctx context.Context, key string, value interface{}) (err error) {
+func (c *RedisCache) GetStruct(ctx context.Context, key string, value interface{}) (err error) {
 	result, err := c.get(ctx, c.getKey(key))
 	if err != nil {
 		return
@@ -249,7 +249,7 @@ func (c *redisCache) GetStruct(ctx context.Context, key string, value interface{
 }
 
 // SetStruct set struct to cache
-func (c *redisCache) SetStruct(ctx context.Context, key string, value interface{}, ttl ...time.Duration) (err error) {
+func (c *RedisCache) SetStruct(ctx context.Context, key string, value interface{}, ttl ...time.Duration) (err error) {
 	buf, err := c.doMarshal(value)
 	if err != nil {
 		return
@@ -260,7 +260,7 @@ func (c *redisCache) SetStruct(ctx context.Context, key string, value interface{
 }
 
 // GetStructSnappy get struct from cache
-func (c *redisCache) GetStructSnappy(ctx context.Context, key string, value interface{}) (err error) {
+func (c *RedisCache) GetStructSnappy(ctx context.Context, key string, value interface{}) (err error) {
 	result, err := c.get(ctx, c.getKey(key))
 	if err != nil {
 		return
@@ -273,7 +273,7 @@ func (c *redisCache) GetStructSnappy(ctx context.Context, key string, value inte
 }
 
 // SetStructSnappy set struct to cache, it recommend for data gt 10KB
-func (c *redisCache) SetStructSnappy(ctx context.Context, key string, value interface{}, ttl ...time.Duration) (err error) {
+func (c *RedisCache) SetStructSnappy(ctx context.Context, key string, value interface{}, ttl ...time.Duration) (err error) {
 	buf, err := c.doMarshal(value)
 	if err != nil {
 		return

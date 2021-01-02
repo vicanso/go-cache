@@ -25,11 +25,11 @@ const multilevelCacheDefaultTimeout = 3 * time.Second
 const multilevelCacheDefaultLRUSize = 100
 
 type slowCache struct {
-	cache *redisCache
+	cache *RedisCache
 }
 
 type MultilevelCacheOptions struct {
-	Cache   *redisCache
+	Cache   *RedisCache
 	LRUSize int
 	TTL     time.Duration
 	Prefix  string

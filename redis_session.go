@@ -21,37 +21,37 @@ import (
 	"github.com/go-redis/redis/v8"
 )
 
-type redisSession struct {
+type RedisSession struct {
 	client  *redis.Client
 	cluster *redis.ClusterClient
 	prefix  string
 }
 
 // NewRedisSession create a new redis session
-func NewRedisSession(c *redis.Client) *redisSession {
-	return &redisSession{
+func NewRedisSession(c *redis.Client) *RedisSession {
+	return &RedisSession{
 		client: c,
 	}
 }
 
 // NewRedisClusterSession create a new redis cluster session
-func NewRedisClusterSession(c *redis.ClusterClient) *redisSession {
-	return &redisSession{
+func NewRedisClusterSession(c *redis.ClusterClient) *RedisSession {
+	return &RedisSession{
 		cluster: c,
 	}
 }
 
-func (rs *redisSession) getKey(key string) string {
+func (rs *RedisSession) getKey(key string) string {
 	return rs.prefix + key
 }
 
 // SetPrefix set prefix for redis session
-func (rs *redisSession) SetPrefix(prefix string) {
+func (rs *RedisSession) SetPrefix(prefix string) {
 	rs.prefix = prefix
 }
 
 // Get get session for redis
-func (rs *redisSession) Get(key string) (result []byte, err error) {
+func (rs *RedisSession) Get(key string) (result []byte, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisTTL)
 	defer cancel()
 	key = rs.getKey(key)
@@ -68,7 +68,7 @@ func (rs *redisSession) Get(key string) (result []byte, err error) {
 }
 
 // Set set session to redis
-func (rs *redisSession) Set(key string, data []byte, ttl time.Duration) error {
+func (rs *RedisSession) Set(key string, data []byte, ttl time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisTTL)
 	defer cancel()
 	key = rs.getKey(key)
@@ -79,7 +79,7 @@ func (rs *redisSession) Set(key string, data []byte, ttl time.Duration) error {
 }
 
 // Destroy destroy session from redis
-func (rs *redisSession) Destroy(key string) error {
+func (rs *RedisSession) Destroy(key string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisTTL)
 	defer cancel()
 	key = rs.getKey(key)
