@@ -53,7 +53,7 @@ func NewMultilevelCache(opts MultilevelCacheOptions) *lruttl.L2Cache {
 		panic("cache can not be nil")
 	}
 	if opts.TTL < time.Second {
-		panic("ttl cat not lt 1s")
+		panic("ttl can not lt 1s")
 	}
 	size := opts.LRUSize
 	if size <= 0 {
