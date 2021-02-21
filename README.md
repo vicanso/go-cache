@@ -1,5 +1,7 @@
 # go-cache
 
+[![Build Status](https://github.com/vicanso/go-cache/workflows/Test/badge.svg)](https://github.com/vicanso/go-cache/actions)
+
 常用的缓存组件
 
 ## RedisCache
