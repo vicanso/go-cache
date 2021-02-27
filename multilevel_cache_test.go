@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
+	lruttl "github.com/vicanso/lru-ttl"
 )
 
 func TestMultiCache(t *testing.T) {
@@ -45,7 +45,7 @@ func TestMultiCache(t *testing.T) {
 	key := randomString()
 	// 首次无数据
 	err := mc.Get(key, &TestData{})
-	assert.Equal(redis.Nil, err)
+	assert.Equal(lruttl.ErrIsNil, err)
 
 	// 设置数据后，查询成功（从lru获取)
 	err = mc.Set(key, &data)

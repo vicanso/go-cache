@@ -27,14 +27,14 @@ type RedisSession struct {
 	prefix  string
 }
 
-// NewRedisSession create a new redis session
+// NewRedisSession returns a new redis session
 func NewRedisSession(c *redis.Client) *RedisSession {
 	return &RedisSession{
 		client: c,
 	}
 }
 
-// NewRedisClusterSession create a new redis cluster session
+// NewRedisClusterSession returns a new redis cluster session
 func NewRedisClusterSession(c *redis.ClusterClient) *RedisSession {
 	return &RedisSession{
 		cluster: c,
@@ -45,12 +45,12 @@ func (rs *RedisSession) getKey(key string) string {
 	return rs.prefix + key
 }
 
-// SetPrefix set prefix for redis session
+// SetPrefix sets prefix for redis session's key
 func (rs *RedisSession) SetPrefix(prefix string) {
 	rs.prefix = prefix
 }
 
-// Get get session for redis
+// Get session from redis, it will not return error if data is not exists
 func (rs *RedisSession) Get(key string) (result []byte, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisTTL)
 	defer cancel()
@@ -67,7 +67,7 @@ func (rs *RedisSession) Get(key string) (result []byte, err error) {
 	return
 }
 
-// Set set session to redis
+// Set session to redis
 func (rs *RedisSession) Set(key string, data []byte, ttl time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisTTL)
 	defer cancel()
@@ -78,7 +78,7 @@ func (rs *RedisSession) Set(key string, data []byte, ttl time.Duration) error {
 	return rs.client.Set(ctx, key, data, ttl).Err()
 }
 
-// Destroy destroy session from redis
+// Destroy session from redis
 func (rs *RedisSession) Destroy(key string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisTTL)
 	defer cancel()

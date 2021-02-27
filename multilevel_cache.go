@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/go-redis/redis/v8"
 	lruttl "github.com/vicanso/lru-ttl"
 )
 
@@ -25,29 +26,39 @@ const multilevelCacheDefaultTimeout = 3 * time.Second
 const multilevelCacheDefaultLRUSize = 100
 
 type slowCache struct {
-	cache *RedisCache
+	cache   *RedisCache
+	timeout time.Duration
 }
 
 type MultilevelCacheOptions struct {
 	Cache   *RedisCache
 	LRUSize int
 	TTL     time.Duration
+	Timeout time.Duration
 	Prefix  string
 }
 
+// Get cache from redis, it will return lruttl.ErrIsNil if data is not exists
 func (sc *slowCache) Get(key string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), multilevelCacheDefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), sc.timeout)
 	defer cancel()
-	return sc.cache.Get(ctx, key)
+	buf, err := sc.cache.Get(ctx, key)
+	// 转换redis nil error 为lruttl 的err is nil
+	if err == redis.Nil {
+		err = lruttl.ErrIsNil
+	}
+	return buf, err
 }
 
+// Set cache to redis with ttl
 func (sc *slowCache) Set(key string, value []byte, ttl time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), multilevelCacheDefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), sc.timeout)
 	defer cancel()
 	return sc.cache.Set(ctx, key, value, ttl)
 }
 
-// NewMultilevelCache create a multilevel cache
+// NewMultilevelCache returns a new multilevel cache,
+// it will panic if Cache is nil or TTL is < one second
 func NewMultilevelCache(opts MultilevelCacheOptions) *lruttl.L2Cache {
 	if opts.Cache == nil {
 		panic("cache can not be nil")
@@ -60,8 +71,13 @@ func NewMultilevelCache(opts MultilevelCacheOptions) *lruttl.L2Cache {
 		size = multilevelCacheDefaultLRUSize
 	}
 
+	timeout := opts.Timeout
+	if timeout == 0 {
+		timeout = multilevelCacheDefaultTimeout
+	}
 	l2 := lruttl.NewL2Cache(&slowCache{
-		cache: opts.Cache,
+		timeout: timeout,
+		cache:   opts.Cache,
 	}, size, opts.TTL)
 	if opts.Prefix != "" {
 		l2.SetPrefix(opts.Prefix)
