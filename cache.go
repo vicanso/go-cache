@@ -17,3 +17,10 @@ package cache
 import "time"
 
 const defaultRedisTTL = 10 * time.Minute
+
+const (
+	// CompressNone compress none
+	CompressNone byte = 0
+	// Compressed compress
+	Compressed byte = 1
+)

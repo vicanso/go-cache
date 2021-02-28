@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/golang/snappy"
 )
 
 // RedisCache redis cache
@@ -33,6 +32,9 @@ type RedisCache struct {
 	marshal   func(v interface{}) ([]byte, error)
 }
 
+// RedisCacheOption redis cache option
+type RedisCacheOption func(c *RedisCache)
+
 // Done done function
 type Done func() error
 
@@ -41,35 +43,54 @@ var noop = func() error {
 	return nil
 }
 
-func snappyEncode(data []byte) []byte {
-	dst := []byte{}
-	dst = snappy.Encode(dst, data)
-	return dst
-}
-
-func snappyDecode(buf []byte) ([]byte, error) {
-	var dst []byte
-	return snappy.Decode(dst, buf)
-}
-
 // NewRedisCache returns a new redis cache
-func NewRedisCache(c *redis.Client) *RedisCache {
-	return &RedisCache{
+func NewRedisCache(c *redis.Client, opts ...RedisCacheOption) *RedisCache {
+	rc := &RedisCache{
 		client: c,
 	}
+	for _, opt := range opts {
+		opt(rc)
+	}
+	return rc
 }
 
 // NewRedisClusterCache returns a new redis cluster cache
-func NewRedisClusterCache(c *redis.ClusterClient) *RedisCache {
-	return &RedisCache{
+func NewRedisClusterCache(c *redis.ClusterClient, opts ...RedisCacheOption) *RedisCache {
+	rc := &RedisCache{
 		cluster: c,
+	}
+	for _, opt := range opts {
+		opt(rc)
+	}
+	return rc
+}
+
+// RedisCacheTTLOption redis cache ttl option
+func RedisCacheTTLOption(ttl time.Duration) RedisCacheOption {
+	return func(c *RedisCache) {
+		c.ttl = ttl
 	}
 }
 
-// SetTTL sets default ttl for cache
-func (c *RedisCache) SetTTL(ttl time.Duration) *RedisCache {
-	c.ttl = ttl
-	return c
+// RedisCachePrefixOption redis cache prefix option
+func RedisCachePrefixOption(prefix string) RedisCacheOption {
+	return func(c *RedisCache) {
+		c.prefix = prefix
+	}
+}
+
+// RedisCacheUnmarshalOption redis cache unmarshal option
+func RedisCacheUnmarshalOption(fn func(data []byte, v interface{}) error) RedisCacheOption {
+	return func(c *RedisCache) {
+		c.unmarshal = fn
+	}
+}
+
+// RedisCacheMarshalOption redis cache marshal option
+func RedisCacheMarshalOption(fn func(v interface{}) ([]byte, error)) RedisCacheOption {
+	return func(c *RedisCache) {
+		c.marshal = fn
+	}
 }
 
 // getTTL gets ttl of cache
@@ -84,25 +105,9 @@ func (c *RedisCache) getTTL(ttl ...time.Duration) time.Duration {
 	return defaultRedisTTL
 }
 
-// SetPrefix sets prefix for cache
-func (c *RedisCache) SetPrefix(prefix string) *RedisCache {
-	c.prefix = prefix
-	return c
-}
-
 // getKey gets key for cache, prefix + key
 func (c *RedisCache) getKey(key string) string {
 	return c.prefix + key
-}
-
-// SetUnmarshal sets custom unmarshal function
-func (c *RedisCache) SetUnmarshal(fn func(data []byte, v interface{}) error) {
-	c.unmarshal = fn
-}
-
-// SetMarshal sets custom marshal function
-func (c *RedisCache) SetMarshal(fn func(v interface{}) ([]byte, error)) {
-	c.marshal = fn
 }
 
 func (c *RedisCache) lock(ctx context.Context, key string, ttl time.Duration) (bool, error) {
@@ -177,7 +182,8 @@ func (c *RedisCache) IncWith(ctx context.Context, key string, value int64, ttl .
 
 // Get gets value from cache
 func (c *RedisCache) get(ctx context.Context, key string) (result []byte, err error) {
-	// key = c.getKey(key)
+	// 避免多次调用getKey，
+	// 由public的方法来处理getkey，因此不再需要调用getKey
 	if c.cluster != nil {
 		return c.cluster.Get(ctx, key).Bytes()
 	}
@@ -268,48 +274,6 @@ func (c *RedisCache) SetStruct(ctx context.Context, key string, value interface{
 	if err != nil {
 		return
 	}
-	key = c.getKey(key)
-	d := c.getTTL(ttl...)
-	return c.set(ctx, key, buf, d)
-}
-
-// GetStructSnappy gets data from cache and decode the data using snappy,
-// then unmarshal to struct
-func (c *RedisCache) GetStructSnappy(ctx context.Context, key string, value interface{}) (err error) {
-	result, err := c.get(ctx, c.getKey(key))
-	if err != nil {
-		return
-	}
-	result, err = snappyDecode(result)
-	if err != nil {
-		return
-	}
-	return c.doUnmarshal(result, value)
-}
-
-// GetStructSnappyWithDone gets data from redis and decode it using snappy,
-// then unmarshal to struct.
-// It returns a done function to delete the data from cache.
-func (c *RedisCache) GetStructSnappyWithDone(ctx context.Context, key string, value interface{}) (done Done, err error) {
-	err = c.GetStructSnappy(ctx, key, value)
-	if err != nil {
-		done = noop
-		return
-	}
-	return func() error {
-		_, err := c.Del(context.Background(), key)
-		return err
-	}, nil
-}
-
-// SetStructSnappy marshals struct to bytes, and encode the data using snappy,
-// then sets data to cache. It is recommended for data gt 10KB
-func (c *RedisCache) SetStructSnappy(ctx context.Context, key string, value interface{}, ttl ...time.Duration) (err error) {
-	buf, err := c.doMarshal(value)
-	if err != nil {
-		return
-	}
-	buf = snappyEncode(buf)
 	key = c.getKey(key)
 	d := c.getTTL(ttl...)
 	return c.set(ctx, key, buf, d)

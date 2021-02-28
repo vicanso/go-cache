@@ -75,12 +75,13 @@ func NewMultilevelCache(opts MultilevelCacheOptions) *lruttl.L2Cache {
 	if timeout == 0 {
 		timeout = multilevelCacheDefaultTimeout
 	}
+	cacheOpts := make([]lruttl.L2CacheOption, 0)
+	if opts.Prefix != "" {
+		cacheOpts = append(cacheOpts, lruttl.L2CachePrefixOption(opts.Prefix))
+	}
 	l2 := lruttl.NewL2Cache(&slowCache{
 		timeout: timeout,
 		cache:   opts.Cache,
-	}, size, opts.TTL)
-	if opts.Prefix != "" {
-		l2.SetPrefix(opts.Prefix)
-	}
+	}, size, opts.TTL, cacheOpts...)
 	return l2
 }

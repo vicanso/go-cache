@@ -16,6 +16,7 @@ package cache
 
 import (
 	"context"
+	"encoding/json"
 	"math/rand"
 	"testing"
 	"time"
@@ -64,10 +65,13 @@ func TestRedisLock(t *testing.T) {
 	assert := assert.New(t)
 	c := newClient()
 	defer c.Close()
-	srv := NewRedisCache(c)
-	srv.SetPrefix("prefix:")
-	// 设置默认的ttl
-	srv.SetTTL(5 * time.Millisecond)
+	opts := []RedisCacheOption{
+		RedisCachePrefixOption("prefix:"),
+		RedisCacheTTLOption(5 * time.Millisecond),
+		RedisCacheMarshalOption(json.Marshal),
+		RedisCacheUnmarshalOption(json.Unmarshal),
+	}
+	srv := NewRedisCache(c, opts...)
 	key := randomString()
 
 	// 首次成功
@@ -192,21 +196,22 @@ func TestRedisGetSetStruct(t *testing.T) {
 
 func TestRedisGetSetStructSnappy(t *testing.T) {
 	assert := assert.New(t)
+	sc := NewSnappyCompressor(10)
 	c := newClient()
 	defer c.Close()
-	srv := NewRedisCache(c)
+	srv := NewRedisCache(c, RedisCacheMarshalOption(sc.Marshal), RedisCacheUnmarshalOption(sc.Unmarshal))
 	key := randomString()
 	type T struct {
 		Name string `json:"name,omitempty"`
 	}
-	name := "Snappy 是一个 C++ 的用来压缩和解压缩的开发包。其目标不是最大限度压缩或者兼容其他压缩格式，而是旨在提供高速压缩速度和合理的压缩率。Snappy 比 zlib 更快，但文件相对要大 20% 到 100%。在 64位模式的 Core i7 处理器上，可达每秒 250~500兆的压缩速度。"
-	err := srv.SetStructSnappy(context.TODO(), key, &T{
+	name := "Snappy Snappy Snappy Snappy Snappy 速度很快"
+	err := srv.SetStruct(context.TODO(), key, &T{
 		Name: name,
 	}, time.Minute)
 	assert.Nil(err)
 
 	result := T{}
-	err = srv.GetStructSnappy(context.TODO(), key, &result)
+	err = srv.GetStruct(context.TODO(), key, &result)
 	assert.Nil(err)
 	assert.Equal(name, result.Name)
 }
