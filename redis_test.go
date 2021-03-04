@@ -192,6 +192,17 @@ func TestRedisGetSetStruct(t *testing.T) {
 	err = srv.GetStruct(context.TODO(), key, &result)
 	assert.Nil(err)
 	assert.Equal(name, result.Name)
+
+	result = T{}
+	done, err := srv.GetStructWithDone(context.TODO(), key, &result)
+	assert.Nil(err)
+	assert.Equal(name, result.Name)
+	err = done()
+	assert.Nil(err)
+
+	// 再次获取则不存在
+	_, err = srv.Get(context.TODO(), key)
+	assert.Equal(redis.Nil, err)
 }
 
 func TestRedisGetSetStructSnappy(t *testing.T) {

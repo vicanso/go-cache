@@ -31,12 +31,14 @@ func TestMultiCache(t *testing.T) {
 	c := newClient()
 	srv := NewRedisCache(c)
 
-	mc := NewMultilevelCache(MultilevelCacheOptions{
-		Cache:   srv,
-		TTL:     time.Minute,
-		LRUSize: 1,
-		Prefix:  "multilevel:",
-	})
+	opts := []MultilevelCacheOption{
+		MultilevelCacheRedisOption(srv),
+		MultilevelCacheLRUSizeOption(1),
+		MultilevelCacheTTLOption(time.Minute),
+		MultilevelCachePrefixOption("multilevel:"),
+	}
+
+	mc := NewMultilevelCache(opts...)
 
 	data := TestData{
 		Name: "nickname",

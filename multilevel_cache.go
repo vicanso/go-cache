@@ -30,12 +30,48 @@ type slowCache struct {
 	timeout time.Duration
 }
 
-type MultilevelCacheOptions struct {
+type MultilevelCacheOption func(opt *multilevelCacheOptions)
+type multilevelCacheOptions struct {
 	Cache   *RedisCache
 	LRUSize int
 	TTL     time.Duration
 	Timeout time.Duration
 	Prefix  string
+}
+
+// MultilevelCacheRedisOption sets redis option
+func MultilevelCacheRedisOption(c *RedisCache) MultilevelCacheOption {
+	return func(opt *multilevelCacheOptions) {
+		opt.Cache = c
+	}
+}
+
+// MultilevelCacheLRUSizeOption sets lru size option
+func MultilevelCacheLRUSizeOption(size int) MultilevelCacheOption {
+	return func(opt *multilevelCacheOptions) {
+		opt.LRUSize = size
+	}
+}
+
+// MultilevelCacheTTLOption sets ttl option
+func MultilevelCacheTTLOption(ttl time.Duration) MultilevelCacheOption {
+	return func(opt *multilevelCacheOptions) {
+		opt.TTL = ttl
+	}
+}
+
+// MultilevelCacheTimeoutOption sets timeout option
+func MultilevelCacheTimeoutOption(timeout time.Duration) MultilevelCacheOption {
+	return func(opt *multilevelCacheOptions) {
+		opt.Timeout = timeout
+	}
+}
+
+// MultilevelCachePrefixOption sets prefix option
+func MultilevelCachePrefixOption(prefix string) MultilevelCacheOption {
+	return func(opt *multilevelCacheOptions) {
+		opt.Prefix = prefix
+	}
 }
 
 // Get cache from redis, it will return lruttl.ErrIsNil if data is not exists
@@ -59,29 +95,34 @@ func (sc *slowCache) Set(key string, value []byte, ttl time.Duration) error {
 
 // NewMultilevelCache returns a new multilevel cache,
 // it will panic if Cache is nil or TTL is < one second
-func NewMultilevelCache(opts MultilevelCacheOptions) *lruttl.L2Cache {
-	if opts.Cache == nil {
+func NewMultilevelCache(opts ...MultilevelCacheOption) *lruttl.L2Cache {
+	multiOptions := multilevelCacheOptions{}
+	for _, opt := range opts {
+		opt(&multiOptions)
+	}
+
+	if multiOptions.Cache == nil {
 		panic("cache can not be nil")
 	}
-	if opts.TTL < time.Second {
+	if multiOptions.TTL < time.Second {
 		panic("ttl can not lt 1s")
 	}
-	size := opts.LRUSize
+	size := multiOptions.LRUSize
 	if size <= 0 {
 		size = multilevelCacheDefaultLRUSize
 	}
 
-	timeout := opts.Timeout
+	timeout := multiOptions.Timeout
 	if timeout == 0 {
 		timeout = multilevelCacheDefaultTimeout
 	}
 	cacheOpts := make([]lruttl.L2CacheOption, 0)
-	if opts.Prefix != "" {
-		cacheOpts = append(cacheOpts, lruttl.L2CachePrefixOption(opts.Prefix))
+	if multiOptions.Prefix != "" {
+		cacheOpts = append(cacheOpts, lruttl.L2CachePrefixOption(multiOptions.Prefix))
 	}
 	l2 := lruttl.NewL2Cache(&slowCache{
 		timeout: timeout,
-		cache:   opts.Cache,
-	}, size, opts.TTL, cacheOpts...)
+		cache:   multiOptions.Cache,
+	}, size, multiOptions.TTL, cacheOpts...)
 	return l2
 }
