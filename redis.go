@@ -24,8 +24,7 @@ import (
 
 // RedisCache redis cache
 type RedisCache struct {
-	client    *redis.Client
-	cluster   *redis.ClusterClient
+	client    redis.UniversalClient
 	ttl       time.Duration
 	prefix    string
 	unmarshal func(data []byte, v interface{}) error
@@ -44,20 +43,9 @@ var noop = func() error {
 }
 
 // NewRedisCache returns a new redis cache
-func NewRedisCache(c *redis.Client, opts ...RedisCacheOption) *RedisCache {
+func NewRedisCache(c redis.UniversalClient, opts ...RedisCacheOption) *RedisCache {
 	rc := &RedisCache{
 		client: c,
-	}
-	for _, opt := range opts {
-		opt(rc)
-	}
-	return rc
-}
-
-// NewRedisClusterCache returns a new redis cluster cache
-func NewRedisClusterCache(c *redis.ClusterClient, opts ...RedisCacheOption) *RedisCache {
-	rc := &RedisCache{
-		cluster: c,
 	}
 	for _, opt := range opts {
 		opt(rc)
@@ -111,9 +99,6 @@ func (c *RedisCache) getKey(key string) string {
 }
 
 func (c *RedisCache) lock(ctx context.Context, key string, ttl time.Duration) (bool, error) {
-	if c.cluster != nil {
-		return c.cluster.SetNX(ctx, key, true, ttl).Result()
-	}
 	return c.client.SetNX(ctx, key, true, ttl).Result()
 }
 
@@ -126,9 +111,6 @@ func (c *RedisCache) Lock(ctx context.Context, key string, ttl ...time.Duration)
 
 func (c *RedisCache) del(ctx context.Context, key string) (count int64, err error) {
 	// Key在public的方法中已完成添加前缀，因此不需要再添加
-	if c.cluster != nil {
-		return c.cluster.Del(ctx, key).Result()
-	}
 	return c.client.Del(ctx, key).Result()
 }
 
@@ -154,9 +136,6 @@ func (c *RedisCache) LockWithDone(ctx context.Context, key string, ttl ...time.D
 }
 
 func (c *RedisCache) txPipeline() redis.Pipeliner {
-	if c.cluster != nil {
-		return c.cluster.TxPipeline()
-	}
 	return c.client.TxPipeline()
 }
 
@@ -184,9 +163,6 @@ func (c *RedisCache) IncWith(ctx context.Context, key string, value int64, ttl .
 func (c *RedisCache) get(ctx context.Context, key string) (result []byte, err error) {
 	// 避免多次调用getKey，
 	// 由public的方法来处理getkey，因此不再需要调用getKey
-	if c.cluster != nil {
-		return c.cluster.Get(ctx, key).Bytes()
-	}
 	return c.client.Get(ctx, key).Bytes()
 }
 
@@ -218,9 +194,6 @@ func (c *RedisCache) GetAndDel(ctx context.Context, key string) (result []byte, 
 }
 
 func (c *RedisCache) set(ctx context.Context, key string, value interface{}, ttl time.Duration) (err error) {
-	if c.cluster != nil {
-		return c.cluster.Set(ctx, key, value, ttl).Err()
-	}
 	return c.client.Set(ctx, key, value, ttl).Err()
 }
 

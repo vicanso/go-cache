@@ -22,22 +22,14 @@ import (
 )
 
 type RedisSession struct {
-	client  *redis.Client
-	cluster *redis.ClusterClient
-	prefix  string
+	client redis.UniversalClient
+	prefix string
 }
 
 // NewRedisSession returns a new redis session
-func NewRedisSession(c *redis.Client) *RedisSession {
+func NewRedisSession(c redis.UniversalClient) *RedisSession {
 	return &RedisSession{
 		client: c,
-	}
-}
-
-// NewRedisClusterSession returns a new redis cluster session
-func NewRedisClusterSession(c *redis.ClusterClient) *RedisSession {
-	return &RedisSession{
-		cluster: c,
 	}
 }
 
@@ -55,11 +47,7 @@ func (rs *RedisSession) Get(key string) (result []byte, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisTTL)
 	defer cancel()
 	key = rs.getKey(key)
-	if rs.cluster != nil {
-		result, err = rs.cluster.Get(ctx, key).Bytes()
-	} else {
-		result, err = rs.client.Get(ctx, key).Bytes()
-	}
+	result, err = rs.client.Get(ctx, key).Bytes()
 	// 如果查询失败，返回空，redis session针对获取不到的不需要直接返回出错
 	if err == redis.Nil {
 		err = nil
@@ -72,9 +60,6 @@ func (rs *RedisSession) Set(key string, data []byte, ttl time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisTTL)
 	defer cancel()
 	key = rs.getKey(key)
-	if rs.cluster != nil {
-		return rs.cluster.Set(ctx, key, data, ttl).Err()
-	}
 	return rs.client.Set(ctx, key, data, ttl).Err()
 }
 
@@ -83,8 +68,5 @@ func (rs *RedisSession) Destroy(key string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisTTL)
 	defer cancel()
 	key = rs.getKey(key)
-	if rs.cluster != nil {
-		return rs.cluster.Del(ctx, key).Err()
-	}
 	return rs.client.Del(ctx, key).Err()
 }
