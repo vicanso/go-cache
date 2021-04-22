@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"time"
 
-	redis "github.com/go-redis/redis/v8"
+	"github.com/go-redis/redis/v8"
 )
 
 // RedisCache redis cache
