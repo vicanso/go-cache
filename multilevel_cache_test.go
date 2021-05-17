@@ -34,6 +34,7 @@ func TestMultiCache(t *testing.T) {
 	opts := []MultilevelCacheOption{
 		MultilevelCacheRedisOption(srv),
 		MultilevelCacheLRUSizeOption(1),
+		MultilevelCacheTimeoutOption(time.Second),
 		MultilevelCacheTTLOption(time.Minute),
 		MultilevelCachePrefixOption("multilevel:"),
 	}

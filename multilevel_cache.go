@@ -107,14 +107,14 @@ func NewMultilevelCache(opts ...MultilevelCacheOption) *lruttl.L2Cache {
 	if multiOptions.TTL < time.Second {
 		panic("ttl can not lt 1s")
 	}
-	size := multiOptions.LRUSize
-	if size <= 0 {
-		size = multilevelCacheDefaultLRUSize
+	size := multilevelCacheDefaultLRUSize
+	if multiOptions.LRUSize > 0 {
+		size = multiOptions.LRUSize
 	}
 
-	timeout := multiOptions.Timeout
-	if timeout == 0 {
-		timeout = multilevelCacheDefaultTimeout
+	timeout := multilevelCacheDefaultTimeout
+	if multiOptions.Timeout > 0 {
+		timeout = multiOptions.Timeout
 	}
 	cacheOpts := make([]lruttl.L2CacheOption, 0)
 	if multiOptions.Prefix != "" {
