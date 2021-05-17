@@ -146,11 +146,7 @@ func (c *RedisCache) IncWith(ctx context.Context, key string, value int64, ttl .
 	// 保证只有首次会设置ttl
 	d := c.getTTL(ttl...)
 	pipe.SetNX(ctx, key, 0, d)
-	var incr *redis.IntCmd
-	if value < 1 {
-		value = 1
-	}
-	incr = pipe.IncrBy(ctx, key, value)
+	incr := pipe.IncrBy(ctx, key, value)
 	_, err = pipe.Exec(ctx)
 	if err != nil {
 		return

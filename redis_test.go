@@ -131,6 +131,10 @@ func TestRedisIncWithTTL(t *testing.T) {
 	assert.Nil(err)
 	assert.Equal(int64(3), count)
 
+	count, err = srv.IncWith(context.TODO(), key, -4, time.Minute)
+	assert.Nil(err)
+	assert.Equal(int64(-1), count)
+
 	count, err = srv.Del(context.TODO(), key)
 	assert.Nil(err)
 	assert.Equal(int64(1), count)
