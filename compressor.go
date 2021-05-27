@@ -22,12 +22,6 @@ import (
 
 type compressor struct {
 	opts *CompressorOptions
-	// // minCompressLength is the min length to compress
-	// minCompressLength int
-	// // encode compress encode function
-	// encode func([]byte) ([]byte, error)
-	// // decode compress decode function
-	// decode func([]byte) ([]byte, error)
 }
 
 type CompressorOptions struct {

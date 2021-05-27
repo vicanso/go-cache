@@ -53,6 +53,18 @@ func NewRedisCache(c redis.UniversalClient, opts ...RedisCacheOption) *RedisCach
 	return rc
 }
 
+func NewCompressRedisCache(c redis.UniversalClient, compressMinLength int, opts ...RedisCacheOption) *RedisCache {
+	if compressMinLength <= 0 {
+		panic("compress mini length should be gt 0")
+	}
+	compressor := NewSnappyCompressor(compressMinLength)
+	opts = append([]RedisCacheOption{
+		RedisCacheMarshalOption(compressor.Marshal),
+		RedisCacheUnmarshalOption(compressor.Unmarshal),
+	}, opts...)
+	return NewRedisCache(c, opts...)
+}
+
 // RedisCacheTTLOption redis cache ttl option
 func RedisCacheTTLOption(ttl time.Duration) RedisCacheOption {
 	return func(c *RedisCache) {

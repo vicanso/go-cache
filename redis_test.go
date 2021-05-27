@@ -211,10 +211,9 @@ func TestRedisGetSetStruct(t *testing.T) {
 
 func TestRedisGetSetStructSnappy(t *testing.T) {
 	assert := assert.New(t)
-	sc := NewSnappyCompressor(10)
 	c := newClient()
 	defer c.Close()
-	srv := NewRedisCache(c, RedisCacheMarshalOption(sc.Marshal), RedisCacheUnmarshalOption(sc.Unmarshal))
+	srv := NewCompressRedisCache(c, 10)
 	key := randomString()
 	type T struct {
 		Name string `json:"name,omitempty"`
