@@ -44,6 +44,8 @@ github.com/vicanso/lru-ttl v0.4.1 h1:1Fcvvy379b3MT08TUDVOXReB8HrGTeUepYSIzzeDoq4
 github.com/vicanso/lru-ttl v0.4.1/go.mod h1:UHvaLnlGyS+CEUJJ9qY15Y6DQnIoMhLs1MJIH+6INxo=
 github.com/vicanso/lru-ttl v0.4.2 h1:EtvFQK+LkGIBw+8LGuPz1AtXHSvKUC+PwIG0qT3ebv0=
 github.com/vicanso/lru-ttl v0.4.2/go.mod h1:YJVBHTWqOrKhseiJlYFOfp+vq028QRGVnCKi4JQByT0=
+github.com/vicanso/lru-ttl v0.5.0 h1:OKa/5fDd/KbyrmlvZcjx3O/oGEAtPJk7ZejTdDX0Q2I=
+github.com/vicanso/lru-ttl v0.5.0/go.mod h1:YJVBHTWqOrKhseiJlYFOfp+vq028QRGVnCKi4JQByT0=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 go.opentelemetry.io/otel v0.19.0 h1:Lenfy7QHRXPZVsw/12CWpxX6d/JkrX8wrx2vO8G80Ng=
 go.opentelemetry.io/otel v0.19.0/go.mod h1:j9bF567N9EfomkSidSfmMwIwIBuP37AMAIzVW85OxSg=

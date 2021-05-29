@@ -93,6 +93,13 @@ func (sc *slowCache) Set(key string, value []byte, ttl time.Duration) error {
 	return sc.cache.Set(ctx, key, value, ttl)
 }
 
+// TTL returns the ttl of key
+func (sc *slowCache) TTL(key string) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), sc.timeout)
+	defer cancel()
+	return sc.cache.TTL(ctx, key)
+}
+
 // NewMultilevelCache returns a new multilevel cache,
 // it will panic if Cache is nil or TTL is < one second
 func NewMultilevelCache(opts ...MultilevelCacheOption) *lruttl.L2Cache {

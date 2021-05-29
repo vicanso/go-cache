@@ -259,3 +259,9 @@ func (c *RedisCache) SetStruct(ctx context.Context, key string, value interface{
 	d := c.getTTL(ttl...)
 	return c.set(ctx, key, buf, d)
 }
+
+// TTL returns the ttl of the key
+func (c *RedisCache) TTL(ctx context.Context, key string) (time.Duration, error) {
+	key = c.getKey(key)
+	return c.client.TTL(ctx, key).Result()
+}
