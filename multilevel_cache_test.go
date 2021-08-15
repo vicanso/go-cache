@@ -15,6 +15,7 @@
 package cache
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -28,13 +29,13 @@ func TestMultiCache(t *testing.T) {
 	}
 
 	assert := assert.New(t)
+	ctx := context.Background()
 	c := newClient()
 	srv := NewRedisCache(c)
 
 	opts := []MultilevelCacheOption{
 		MultilevelCacheRedisOption(srv),
 		MultilevelCacheLRUSizeOption(1),
-		MultilevelCacheTimeoutOption(time.Second),
 		MultilevelCacheTTLOption(time.Minute),
 		MultilevelCachePrefixOption("multilevel:"),
 	}
@@ -47,23 +48,23 @@ func TestMultiCache(t *testing.T) {
 
 	key := randomString()
 	// 首次无数据
-	err := mc.Get(key, &TestData{})
+	err := mc.Get(ctx, key, &TestData{})
 	assert.Equal(lruttl.ErrIsNil, err)
 
 	// 设置数据后，查询成功（从lru获取)
-	err = mc.Set(key, &data)
+	err = mc.Set(ctx, key, &data)
 	assert.Nil(err)
 	result := TestData{}
-	err = mc.Get(key, &result)
+	err = mc.Get(ctx, key, &result)
 	assert.Nil(err)
 	assert.Equal(data.Name, result.Name)
 
 	// 添加新的数据，lru的数据被更新
-	err = mc.Set("a", &TestData{})
+	err = mc.Set(ctx, "a", &TestData{})
 	assert.Nil(err)
 	result = TestData{}
 	// 从redis中获取数据
-	err = mc.Get(key, &result)
+	err = mc.Get(ctx, key, &result)
 	assert.Nil(err)
 	assert.Equal(data.Name, result.Name)
 }

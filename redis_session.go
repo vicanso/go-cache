@@ -43,9 +43,7 @@ func (rs *RedisSession) SetPrefix(prefix string) {
 }
 
 // Get session from redis, it will not return error if data is not exists
-func (rs *RedisSession) Get(key string) (result []byte, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisTTL)
-	defer cancel()
+func (rs *RedisSession) Get(ctx context.Context, key string) (result []byte, err error) {
 	key = rs.getKey(key)
 	result, err = rs.client.Get(ctx, key).Bytes()
 	// 如果查询失败，返回空，redis session针对获取不到的不需要直接返回出错
@@ -56,17 +54,13 @@ func (rs *RedisSession) Get(key string) (result []byte, err error) {
 }
 
 // Set session to redis
-func (rs *RedisSession) Set(key string, data []byte, ttl time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisTTL)
-	defer cancel()
+func (rs *RedisSession) Set(ctx context.Context, key string, data []byte, ttl time.Duration) error {
 	key = rs.getKey(key)
 	return rs.client.Set(ctx, key, data, ttl).Err()
 }
 
 // Destroy session from redis
-func (rs *RedisSession) Destroy(key string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisTTL)
-	defer cancel()
+func (rs *RedisSession) Destroy(ctx context.Context, key string) error {
 	key = rs.getKey(key)
 	return rs.client.Del(ctx, key).Err()
 }

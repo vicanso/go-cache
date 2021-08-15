@@ -22,12 +22,10 @@ import (
 	lruttl "github.com/vicanso/lru-ttl"
 )
 
-const multilevelCacheDefaultTimeout = 3 * time.Second
 const multilevelCacheDefaultLRUSize = 100
 
 type slowCache struct {
-	cache   *RedisCache
-	timeout time.Duration
+	cache *RedisCache
 }
 
 type MultilevelCacheOption func(opt *multilevelCacheOptions)
@@ -35,7 +33,6 @@ type multilevelCacheOptions struct {
 	Cache   *RedisCache
 	LRUSize int
 	TTL     time.Duration
-	Timeout time.Duration
 	Prefix  string
 }
 
@@ -60,13 +57,6 @@ func MultilevelCacheTTLOption(ttl time.Duration) MultilevelCacheOption {
 	}
 }
 
-// MultilevelCacheTimeoutOption sets timeout option
-func MultilevelCacheTimeoutOption(timeout time.Duration) MultilevelCacheOption {
-	return func(opt *multilevelCacheOptions) {
-		opt.Timeout = timeout
-	}
-}
-
 // MultilevelCachePrefixOption sets prefix option
 func MultilevelCachePrefixOption(prefix string) MultilevelCacheOption {
 	return func(opt *multilevelCacheOptions) {
@@ -75,9 +65,7 @@ func MultilevelCachePrefixOption(prefix string) MultilevelCacheOption {
 }
 
 // Get cache from redis, it will return lruttl.ErrIsNil if data is not exists
-func (sc *slowCache) Get(key string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), sc.timeout)
-	defer cancel()
+func (sc *slowCache) Get(ctx context.Context, key string) ([]byte, error) {
 	buf, err := sc.cache.Get(ctx, key)
 	// 转换redis nil error 为lruttl 的err is nil
 	if err == redis.Nil {
@@ -87,16 +75,12 @@ func (sc *slowCache) Get(key string) ([]byte, error) {
 }
 
 // Set cache to redis with ttl
-func (sc *slowCache) Set(key string, value []byte, ttl time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), sc.timeout)
-	defer cancel()
+func (sc *slowCache) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
 	return sc.cache.Set(ctx, key, value, ttl)
 }
 
 // TTL returns the ttl of key
-func (sc *slowCache) TTL(key string) (time.Duration, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), sc.timeout)
-	defer cancel()
+func (sc *slowCache) TTL(ctx context.Context, key string) (time.Duration, error) {
 	return sc.cache.TTL(ctx, key)
 }
 
@@ -119,17 +103,12 @@ func NewMultilevelCache(opts ...MultilevelCacheOption) *lruttl.L2Cache {
 		size = multiOptions.LRUSize
 	}
 
-	timeout := multilevelCacheDefaultTimeout
-	if multiOptions.Timeout > 0 {
-		timeout = multiOptions.Timeout
-	}
 	cacheOpts := make([]lruttl.L2CacheOption, 0)
 	if multiOptions.Prefix != "" {
 		cacheOpts = append(cacheOpts, lruttl.L2CachePrefixOption(multiOptions.Prefix))
 	}
 	l2 := lruttl.NewL2Cache(&slowCache{
-		timeout: timeout,
-		cache:   multiOptions.Cache,
+		cache: multiOptions.Cache,
 	}, size, multiOptions.TTL, cacheOpts...)
 	return l2
 }

@@ -15,6 +15,7 @@
 package cache
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -28,21 +29,22 @@ func TestRedisSession(t *testing.T) {
 	rs := NewRedisSession(c)
 	key := randomString()
 	rs.SetPrefix("ss:")
+	ctx := context.Background()
 
 	data := []byte("abcd")
-	err := rs.Set(key, data, time.Minute)
+	err := rs.Set(ctx, key, data, time.Minute)
 	assert.Nil(err)
 
-	result, err := rs.Get(key)
+	result, err := rs.Get(ctx, key)
 	assert.Nil(err)
 	assert.Equal(data, result)
 
 	// 删除
-	err = rs.Destroy(key)
+	err = rs.Destroy(ctx, key)
 	assert.Nil(err)
 
 	// 删除后获取，为空
-	result, err = rs.Get(key)
+	result, err = rs.Get(ctx, key)
 	assert.Nil(err)
 	assert.Empty(result)
 }

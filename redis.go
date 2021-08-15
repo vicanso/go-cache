@@ -121,13 +121,13 @@ func (c *RedisCache) Lock(ctx context.Context, key string, ttl ...time.Duration)
 	return c.lock(ctx, key, d)
 }
 
-func (c *RedisCache) del(ctx context.Context, key string) (count int64, err error) {
+func (c *RedisCache) del(ctx context.Context, key string) (int64, error) {
 	// Key在public的方法中已完成添加前缀，因此不需要再添加
 	return c.client.Del(ctx, key).Result()
 }
 
 // Del deletes data from cache
-func (c *RedisCache) Del(ctx context.Context, key string) (count int64, err error) {
+func (c *RedisCache) Del(ctx context.Context, key string) (int64, error) {
 	return c.del(ctx, c.getKey(key))
 }
 
@@ -152,61 +152,61 @@ func (c *RedisCache) txPipeline() redis.Pipeliner {
 }
 
 // IncWith inc the value of key from cache
-func (c *RedisCache) IncWith(ctx context.Context, key string, value int64, ttl ...time.Duration) (count int64, err error) {
+func (c *RedisCache) IncWith(ctx context.Context, key string, value int64, ttl ...time.Duration) (int64, error) {
 	key = c.getKey(key)
 	pipe := c.txPipeline()
 	// 保证只有首次会设置ttl
 	d := c.getTTL(ttl...)
 	pipe.SetNX(ctx, key, 0, d)
 	incr := pipe.IncrBy(ctx, key, value)
-	_, err = pipe.Exec(ctx)
+	_, err := pipe.Exec(ctx)
 	if err != nil {
-		return
+		return 0, err
 	}
-	count = incr.Val()
-	return
+	count := incr.Val()
+	return count, nil
 }
 
 // Get gets value from cache
-func (c *RedisCache) get(ctx context.Context, key string) (result []byte, err error) {
+func (c *RedisCache) get(ctx context.Context, key string) ([]byte, error) {
 	// 避免多次调用getKey，
 	// 由public的方法来处理getkey，因此不再需要调用getKey
 	return c.client.Get(ctx, key).Bytes()
 }
 
 // Get gets value from cache
-func (c *RedisCache) Get(ctx context.Context, key string) (result []byte, err error) {
+func (c *RedisCache) Get(ctx context.Context, key string) ([]byte, error) {
 	return c.get(ctx, c.getKey(key))
 }
 
 // GetIgnoreNilErr gets value from cache and ignore nil err
-func (c *RedisCache) GetIgnoreNilErr(ctx context.Context, key string) (result []byte, err error) {
-	result, err = c.get(ctx, c.getKey(key))
-	if err == redis.Nil {
-		err = nil
+func (c *RedisCache) GetIgnoreNilErr(ctx context.Context, key string) ([]byte, error) {
+	result, err := c.get(ctx, c.getKey(key))
+	if err != nil && err != redis.Nil {
+		return nil, err
 	}
-	return
+	return result, nil
 }
 
 // GetAndDel gets value and deletes it remove cache
-func (c *RedisCache) GetAndDel(ctx context.Context, key string) (result []byte, err error) {
+func (c *RedisCache) GetAndDel(ctx context.Context, key string) ([]byte, error) {
 	pipe := c.txPipeline()
 	key = c.getKey(key)
 	cmd := pipe.Get(ctx, key)
 	pipe.Del(ctx, key)
-	_, err = pipe.Exec(ctx)
+	_, err := pipe.Exec(ctx)
 	if err != nil {
-		return
+		return nil, err
 	}
 	return cmd.Bytes()
 }
 
-func (c *RedisCache) set(ctx context.Context, key string, value interface{}, ttl time.Duration) (err error) {
+func (c *RedisCache) set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
 	return c.client.Set(ctx, key, value, ttl).Err()
 }
 
 // Set sets data to cache, if ttl is not nil, it will use default ttl
-func (c *RedisCache) Set(ctx context.Context, key string, value interface{}, ttl ...time.Duration) (err error) {
+func (c *RedisCache) Set(ctx context.Context, key string, value interface{}, ttl ...time.Duration) error {
 	key = c.getKey(key)
 	d := c.getTTL(ttl...)
 	return c.set(ctx, key, value, d)
@@ -227,21 +227,20 @@ func (c *RedisCache) doMarshal(value interface{}) ([]byte, error) {
 }
 
 // GetStruct gets cache and unmarshal to struct
-func (c *RedisCache) GetStruct(ctx context.Context, key string, value interface{}) (err error) {
+func (c *RedisCache) GetStruct(ctx context.Context, key string, value interface{}) error {
 	result, err := c.get(ctx, c.getKey(key))
 	if err != nil {
-		return
+		return err
 	}
 	return c.doUnmarshal(result, value)
 }
 
 // GetStructWithDone gets data from redis and unmarshal to struct,
 // it returns a done function to delete the data.
-func (c *RedisCache) GetStructWithDone(ctx context.Context, key string, value interface{}) (done Done, err error) {
-	err = c.GetStruct(ctx, key, value)
+func (c *RedisCache) GetStructWithDone(ctx context.Context, key string, value interface{}) (Done, error) {
+	err := c.GetStruct(ctx, key, value)
 	if err != nil {
-		done = noop
-		return
+		return noop, err
 	}
 	return func() error {
 		_, err := c.Del(context.Background(), key)
@@ -250,10 +249,10 @@ func (c *RedisCache) GetStructWithDone(ctx context.Context, key string, value in
 }
 
 // SetStruct marshals struct to bytes and sets to cache, if it will use default ttl if ttl is nil
-func (c *RedisCache) SetStruct(ctx context.Context, key string, value interface{}, ttl ...time.Duration) (err error) {
+func (c *RedisCache) SetStruct(ctx context.Context, key string, value interface{}, ttl ...time.Duration) error {
 	buf, err := c.doMarshal(value)
 	if err != nil {
-		return
+		return err
 	}
 	key = c.getKey(key)
 	d := c.getTTL(ttl...)
