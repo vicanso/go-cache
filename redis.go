@@ -106,8 +106,11 @@ func (c *RedisCache) getTTL(ttl ...time.Duration) time.Duration {
 }
 
 // getKey gets key for cache, prefix + key
-func (c *RedisCache) getKey(key string) string {
-	return c.prefix + key
+func (c *RedisCache) getKey(key string) (string, error) {
+	if key == "" {
+		return "", ErrKeyIsNil
+	}
+	return c.prefix + key, nil
 }
 
 func (c *RedisCache) lock(ctx context.Context, key string, ttl time.Duration) (bool, error) {
@@ -116,7 +119,10 @@ func (c *RedisCache) lock(ctx context.Context, key string, ttl time.Duration) (b
 
 // Lock the key for ttl, ii will return true, nil if success
 func (c *RedisCache) Lock(ctx context.Context, key string, ttl ...time.Duration) (bool, error) {
-	key = c.getKey(key)
+	key, err := c.getKey(key)
+	if err != nil {
+		return false, err
+	}
 	d := c.getTTL(ttl...)
 	return c.lock(ctx, key, d)
 }
@@ -128,12 +134,19 @@ func (c *RedisCache) del(ctx context.Context, key string) (int64, error) {
 
 // Del deletes data from cache
 func (c *RedisCache) Del(ctx context.Context, key string) (int64, error) {
-	return c.del(ctx, c.getKey(key))
+	key, err := c.getKey(key)
+	if err != nil {
+		return 0, err
+	}
+	return c.del(ctx, key)
 }
 
 // LockWithDone locks the key for ttl and return done function to delete the lock
 func (c *RedisCache) LockWithDone(ctx context.Context, key string, ttl ...time.Duration) (bool, Done, error) {
-	key = c.getKey(key)
+	key, err := c.getKey(key)
+	if err != nil {
+		return false, noop, err
+	}
 	d := c.getTTL(ttl...)
 	success, err := c.lock(ctx, key, d)
 	// 如果lock失败，则返回no op 的done function
@@ -153,13 +166,16 @@ func (c *RedisCache) txPipeline() redis.Pipeliner {
 
 // IncWith inc the value of key from cache
 func (c *RedisCache) IncWith(ctx context.Context, key string, value int64, ttl ...time.Duration) (int64, error) {
-	key = c.getKey(key)
+	key, err := c.getKey(key)
+	if err != nil {
+		return 0, err
+	}
 	pipe := c.txPipeline()
 	// 保证只有首次会设置ttl
 	d := c.getTTL(ttl...)
 	pipe.SetNX(ctx, key, 0, d)
 	incr := pipe.IncrBy(ctx, key, value)
-	_, err := pipe.Exec(ctx)
+	_, err = pipe.Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -176,12 +192,20 @@ func (c *RedisCache) get(ctx context.Context, key string) ([]byte, error) {
 
 // Get gets value from cache
 func (c *RedisCache) Get(ctx context.Context, key string) ([]byte, error) {
-	return c.get(ctx, c.getKey(key))
+	key, err := c.getKey(key)
+	if err != nil {
+		return nil, err
+	}
+	return c.get(ctx, key)
 }
 
 // GetIgnoreNilErr gets value from cache and ignore nil err
 func (c *RedisCache) GetIgnoreNilErr(ctx context.Context, key string) ([]byte, error) {
-	result, err := c.get(ctx, c.getKey(key))
+	key, err := c.getKey(key)
+	if err != nil {
+		return nil, err
+	}
+	result, err := c.get(ctx, key)
 	if err != nil && err != redis.Nil {
 		return nil, err
 	}
@@ -190,11 +214,14 @@ func (c *RedisCache) GetIgnoreNilErr(ctx context.Context, key string) ([]byte, e
 
 // GetAndDel gets value and deletes it remove cache
 func (c *RedisCache) GetAndDel(ctx context.Context, key string) ([]byte, error) {
+	key, err := c.getKey(key)
+	if err != nil {
+		return nil, err
+	}
 	pipe := c.txPipeline()
-	key = c.getKey(key)
 	cmd := pipe.Get(ctx, key)
 	pipe.Del(ctx, key)
-	_, err := pipe.Exec(ctx)
+	_, err = pipe.Exec(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +234,10 @@ func (c *RedisCache) set(ctx context.Context, key string, value interface{}, ttl
 
 // Set sets data to cache, if ttl is not nil, it will use default ttl
 func (c *RedisCache) Set(ctx context.Context, key string, value interface{}, ttl ...time.Duration) error {
-	key = c.getKey(key)
+	key, err := c.getKey(key)
+	if err != nil {
+		return err
+	}
 	d := c.getTTL(ttl...)
 	return c.set(ctx, key, value, d)
 }
@@ -228,7 +258,12 @@ func (c *RedisCache) doMarshal(value interface{}) ([]byte, error) {
 
 // GetStruct gets cache and unmarshal to struct
 func (c *RedisCache) GetStruct(ctx context.Context, key string, value interface{}) error {
-	result, err := c.get(ctx, c.getKey(key))
+	key, err := c.getKey(key)
+	if err != nil {
+		return err
+	}
+
+	result, err := c.get(ctx, key)
 	if err != nil {
 		return err
 	}
@@ -250,17 +285,23 @@ func (c *RedisCache) GetStructWithDone(ctx context.Context, key string, value in
 
 // SetStruct marshals struct to bytes and sets to cache, if it will use default ttl if ttl is nil
 func (c *RedisCache) SetStruct(ctx context.Context, key string, value interface{}, ttl ...time.Duration) error {
+	key, err := c.getKey(key)
+	if err != nil {
+		return err
+	}
 	buf, err := c.doMarshal(value)
 	if err != nil {
 		return err
 	}
-	key = c.getKey(key)
 	d := c.getTTL(ttl...)
 	return c.set(ctx, key, buf, d)
 }
 
 // TTL returns the ttl of the key
 func (c *RedisCache) TTL(ctx context.Context, key string) (time.Duration, error) {
-	key = c.getKey(key)
+	key, err := c.getKey(key)
+	if err != nil {
+		return 0, err
+	}
 	return c.client.TTL(ctx, key).Result()
 }

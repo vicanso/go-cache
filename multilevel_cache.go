@@ -34,6 +34,12 @@ type multilevelCacheOptions struct {
 	LRUSize int
 	TTL     time.Duration
 	Prefix  string
+	// marshal is custom marshal function.
+	// It will be json.Marshal if not set
+	Marshal lruttl.L2CacheMarshal
+	// unmarshal is custom unmarshal function.
+	// It will be json.Unmarshal if not set
+	Unmarshal lruttl.L2CacheUnmarshal
 }
 
 // MultilevelCacheRedisOption sets redis option
@@ -64,6 +70,20 @@ func MultilevelCachePrefixOption(prefix string) MultilevelCacheOption {
 	}
 }
 
+// MultilevelCacheMarshalOption sets marshal function option
+func MultilevelCacheMarshalOption(fn func(v interface{}) ([]byte, error)) MultilevelCacheOption {
+	return func(opt *multilevelCacheOptions) {
+		opt.Marshal = fn
+	}
+}
+
+// MultilevelCacheUnmarshalOption sets unmarshal function option
+func MultilevelCacheUnmarshalOption(fn func(data []byte, v interface{}) error) MultilevelCacheOption {
+	return func(opt *multilevelCacheOptions) {
+		opt.Unmarshal = fn
+	}
+}
+
 // Get cache from redis, it will return lruttl.ErrIsNil if data is not exists
 func (sc *slowCache) Get(ctx context.Context, key string) ([]byte, error) {
 	buf, err := sc.cache.Get(ctx, key)
@@ -82,6 +102,11 @@ func (sc *slowCache) Set(ctx context.Context, key string, value []byte, ttl time
 // TTL returns the ttl of key
 func (sc *slowCache) TTL(ctx context.Context, key string) (time.Duration, error) {
 	return sc.cache.TTL(ctx, key)
+}
+
+// Del deletes the cache
+func (sc *slowCache) Del(ctx context.Context, key string) (int64, error) {
+	return sc.cache.Del(ctx, key)
 }
 
 // NewMultilevelCache returns a new multilevel cache,
@@ -106,6 +131,12 @@ func NewMultilevelCache(opts ...MultilevelCacheOption) *lruttl.L2Cache {
 	cacheOpts := make([]lruttl.L2CacheOption, 0)
 	if multiOptions.Prefix != "" {
 		cacheOpts = append(cacheOpts, lruttl.L2CachePrefixOption(multiOptions.Prefix))
+	}
+	if multiOptions.Marshal != nil {
+		cacheOpts = append(cacheOpts, lruttl.L2CacheMarshalOption(multiOptions.Marshal))
+	}
+	if multiOptions.Unmarshal != nil {
+		cacheOpts = append(cacheOpts, lruttl.L2CacheUnmarshalOption(multiOptions.Unmarshal))
 	}
 	l2 := lruttl.NewL2Cache(&slowCache{
 		cache: multiOptions.Cache,

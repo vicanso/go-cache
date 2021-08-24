@@ -14,7 +14,10 @@
 
 package cache
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 const defaultRedisTTL = 10 * time.Minute
 
@@ -24,3 +27,5 @@ const (
 	// Compressed compress
 	Compressed byte = 1
 )
+
+var ErrKeyIsNil = errors.New("key is nil")

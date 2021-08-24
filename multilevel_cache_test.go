@@ -16,6 +16,7 @@ package cache
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -38,6 +39,8 @@ func TestMultiCache(t *testing.T) {
 		MultilevelCacheLRUSizeOption(1),
 		MultilevelCacheTTLOption(time.Minute),
 		MultilevelCachePrefixOption("multilevel:"),
+		MultilevelCacheMarshalOption(json.Marshal),
+		MultilevelCacheUnmarshalOption(json.Unmarshal),
 	}
 
 	mc := NewMultilevelCache(opts...)
