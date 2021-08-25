@@ -71,14 +71,14 @@ func MultilevelCachePrefixOption(prefix string) MultilevelCacheOption {
 }
 
 // MultilevelCacheMarshalOption sets marshal function option
-func MultilevelCacheMarshalOption(fn func(v interface{}) ([]byte, error)) MultilevelCacheOption {
+func MultilevelCacheMarshalOption(fn lruttl.L2CacheMarshal) MultilevelCacheOption {
 	return func(opt *multilevelCacheOptions) {
 		opt.Marshal = fn
 	}
 }
 
 // MultilevelCacheUnmarshalOption sets unmarshal function option
-func MultilevelCacheUnmarshalOption(fn func(data []byte, v interface{}) error) MultilevelCacheOption {
+func MultilevelCacheUnmarshalOption(fn lruttl.L2CacheUnmarshal) MultilevelCacheOption {
 	return func(opt *multilevelCacheOptions) {
 		opt.Unmarshal = fn
 	}

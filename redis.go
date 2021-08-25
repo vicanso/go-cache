@@ -278,7 +278,7 @@ func (c *RedisCache) GetStructWithDone(ctx context.Context, key string, value in
 		return noop, err
 	}
 	return func() error {
-		_, err := c.Del(context.Background(), key)
+		_, err := c.Del(ctx, key)
 		return err
 	}, nil
 }
