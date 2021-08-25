@@ -97,21 +97,22 @@ func TestRedisLockWithDone(t *testing.T) {
 	defer c.Close()
 	srv := NewRedisCache(c)
 	key := randomString()
+	ttl := 2 * time.Second
 
 	// 首次成功
-	ok, done, err := srv.LockWithDone(context.TODO(), key, 5*time.Millisecond)
+	ok, done, err := srv.LockWithDone(context.TODO(), key, ttl)
 	assert.Nil(err)
 	assert.True(ok)
 
 	// 第二次失败
-	ok, _, err = srv.LockWithDone(context.TODO(), key, 5*time.Millisecond)
+	ok, _, err = srv.LockWithDone(context.TODO(), key, ttl)
 	assert.Nil(err)
 	assert.False(ok)
 
 	// 删除数据后第三次成功
 	err = done()
 	assert.Nil(err)
-	ok, _, err = srv.LockWithDone(context.TODO(), key, 5*time.Millisecond)
+	ok, _, err = srv.LockWithDone(context.TODO(), key, ttl)
 	assert.Nil(err)
 	assert.True(ok)
 }
