@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/golang/snappy"
+	"github.com/klauspost/compress/zstd"
 )
 
 type compressor struct {
@@ -42,6 +43,23 @@ func snappyEncode(data []byte) ([]byte, error) {
 func snappyDecode(buf []byte) ([]byte, error) {
 	var dst []byte
 	return snappy.Decode(dst, buf)
+}
+
+func zstdEncode(data []byte) ([]byte, error) {
+	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	if err != nil {
+		return nil, err
+	}
+	data = encoder.EncodeAll(data, make([]byte, 0, len(data)))
+	return data, nil
+}
+
+func zstdDecode(data []byte) ([]byte, error) {
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		return nil, err
+	}
+	return decoder.DecodeAll(data, nil)
 }
 
 // Marshal returns the data marshal by json and compress by decoder.
@@ -92,6 +110,15 @@ func NewSnappyCompressor(minCompressLength int) *compressor {
 		MinCompressLength: minCompressLength,
 		Encode:            snappyEncode,
 		Decode:            snappyDecode,
+	})
+}
+
+// NewZSTDCompressor returns a new zstd compressor
+func NewZSTDCompressor(minCompressLength int) *compressor {
+	return NewComprsser(CompressorOptions{
+		MinCompressLength: minCompressLength,
+		Encode:            zstdEncode,
+		Decode:            zstdDecode,
 	})
 }
 

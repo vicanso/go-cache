@@ -50,3 +50,33 @@ func TestSnappyCompressor(t *testing.T) {
 	assert.Equal(data.Name, unmarshalData.Name)
 
 }
+
+func TestZSTDCompressor(t *testing.T) {
+	assert := assert.New(t)
+	type Data struct {
+		Name string `json:"name,omitempty"`
+	}
+
+	sc := NewZSTDCompressor(50)
+	data := &Data{
+		Name: "test",
+	}
+	buf, err := sc.Marshal(data)
+	assert.Nil(err)
+	assert.Equal("\x00{\"name\":\"test\"}", string(buf))
+	unmarshalData := &Data{}
+	err = sc.Unmarshal(buf, unmarshalData)
+	assert.Nil(err)
+	assert.Equal(data.Name, unmarshalData.Name)
+
+	data = &Data{
+		Name: "Snappy Snappy Snappy Snappy Snappy 速度很快",
+	}
+	buf, err = sc.Marshal(data)
+	assert.Nil(err)
+	assert.Equal("\x01(\xb5/\xfd\x04\x005\x01\x00\xe4\x01{\"name\":\"Snappy 速度很快\"}\x01T\x10\x03\x19\x14\x056\xcfS", string(buf))
+	unmarshalData = &Data{}
+	err = sc.Unmarshal(buf, unmarshalData)
+	assert.Nil(err)
+	assert.Equal(data.Name, unmarshalData.Name)
+}

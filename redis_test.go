@@ -230,3 +230,24 @@ func TestRedisGetSetStructSnappy(t *testing.T) {
 	assert.Nil(err)
 	assert.Equal(name, result.Name)
 }
+
+func TestRedisGetSetStructZSTD(t *testing.T) {
+	assert := assert.New(t)
+	c := newClient()
+	defer c.Close()
+	srv := NewZSTDRedisCache(c, 10)
+	key := randomString()
+	type T struct {
+		Name string `json:"name,omitempty"`
+	}
+	name := "Snappy Snappy Snappy Snappy Snappy 速度很快"
+	err := srv.SetStruct(context.TODO(), key, &T{
+		Name: name,
+	}, time.Minute)
+	assert.Nil(err)
+
+	result := T{}
+	err = srv.GetStruct(context.TODO(), key, &result)
+	assert.Nil(err)
+	assert.Equal(name, result.Name)
+}

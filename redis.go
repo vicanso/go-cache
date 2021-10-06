@@ -53,16 +53,35 @@ func NewRedisCache(c redis.UniversalClient, opts ...RedisCacheOption) *RedisCach
 	return rc
 }
 
-func NewCompressRedisCache(c redis.UniversalClient, compressMinLength int, opts ...RedisCacheOption) *RedisCache {
-	if compressMinLength <= 0 {
-		panic("compress mini length should be gt 0")
-	}
-	compressor := NewSnappyCompressor(compressMinLength)
+func newCompressRedisCache(c redis.UniversalClient, compressor *compressor, opts ...RedisCacheOption) *RedisCache {
 	opts = append([]RedisCacheOption{
 		RedisCacheMarshalOption(compressor.Marshal),
 		RedisCacheUnmarshalOption(compressor.Unmarshal),
 	}, opts...)
 	return NewRedisCache(c, opts...)
+}
+
+// NewSnappyRedisCache returns a redis cache with snappy compressor
+func NewSnappyRedisCache(c redis.UniversalClient, compressMinLength int, opts ...RedisCacheOption) *RedisCache {
+	if compressMinLength <= 0 {
+		panic("compress mini length should be gt 0")
+	}
+	compressor := NewSnappyCompressor(compressMinLength)
+	return newCompressRedisCache(c, compressor, opts...)
+}
+
+// NewZSTDRedisCache returns a redis cache with zstd compressor
+func NewZSTDRedisCache(c redis.UniversalClient, compressMinLength int, opts ...RedisCacheOption) *RedisCache {
+	if compressMinLength <= 0 {
+		panic("compress mini length should be gt 0")
+	}
+	compressor := NewZSTDCompressor(compressMinLength)
+	return newCompressRedisCache(c, compressor, opts...)
+}
+
+// NewCompressRedisCache the same as NewSnappyRedisCache
+func NewCompressRedisCache(c redis.UniversalClient, compressMinLength int, opts ...RedisCacheOption) *RedisCache {
+	return NewSnappyRedisCache(c, compressMinLength, opts...)
 }
 
 // RedisCacheTTLOption redis cache ttl option
