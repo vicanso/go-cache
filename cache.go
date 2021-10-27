@@ -23,9 +23,9 @@ const defaultRedisTTL = 10 * time.Minute
 
 const (
 	// CompressNone compress none
-	CompressNone byte = 0
+	CompressNone byte = iota
 	// Compressed compress
-	Compressed byte = 1
+	Compressed
 )
 
 var ErrKeyIsNil = errors.New("key is nil")
