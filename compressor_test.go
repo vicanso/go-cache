@@ -80,3 +80,32 @@ func TestZSTDCompressor(t *testing.T) {
 	assert.Nil(err)
 	assert.Equal(data.Name, unmarshalData.Name)
 }
+
+func TestLZ4Compressor(t *testing.T) {
+	assert := assert.New(t)
+	type Data struct {
+		Name string `json:"name,omitempty"`
+	}
+	sc := NewLZ4Compressor(50)
+	data := &Data{
+		Name: "test",
+	}
+	buf, err := sc.Marshal(data)
+	assert.Nil(err)
+	assert.Equal("\x00{\"name\":\"test\"}", string(buf))
+	unmarshalData := &Data{}
+	err = sc.Unmarshal(buf, unmarshalData)
+	assert.Nil(err)
+	assert.Equal(data.Name, unmarshalData.Name)
+
+	data = &Data{
+		Name: "Snappy Snappy Snappy Snappy Snappy 速度很快",
+	}
+	buf, err = sc.Marshal(data)
+	assert.Nil(err)
+	assert.Equal("\x01\xff\x01{\"name\":\"Snappy \a\x00\x01\x01\x15\x00\xf0\x02py 速度很快\"}", string(buf))
+	unmarshalData = &Data{}
+	err = sc.Unmarshal(buf, unmarshalData)
+	assert.Nil(err)
+	assert.Equal(data.Name, unmarshalData.Name)
+}

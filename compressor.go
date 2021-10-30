@@ -16,9 +16,11 @@ package cache
 
 import (
 	"encoding/json"
+	"errors"
 
 	"github.com/golang/snappy"
 	"github.com/klauspost/compress/zstd"
+	"github.com/pierrec/lz4"
 )
 
 type compressor struct {
@@ -40,9 +42,37 @@ func snappyEncode(data []byte) ([]byte, error) {
 	return dst, nil
 }
 
-func snappyDecode(buf []byte) ([]byte, error) {
+func snappyDecode(data []byte) ([]byte, error) {
 	var dst []byte
-	return snappy.Decode(dst, buf)
+	return snappy.Decode(dst, data)
+}
+
+func lz4Encode(data []byte) ([]byte, error) {
+	buf := make([]byte, lz4.CompressBlockBound(len(data)))
+	n, err := lz4.CompressBlock(data, buf, nil)
+	if err != nil {
+		return nil, err
+	}
+	return buf[:n], nil
+}
+
+func lz4Decode(data []byte) ([]byte, error) {
+	times := 10
+	// 扩容三次
+	for i := 0; i < 3; i++ {
+		buf := make([]byte, len(data)*times)
+		n, err := lz4.UncompressBlock(data, buf)
+		// 如果长度不够，则加倍
+		if err == lz4.ErrInvalidSourceShortBuffer {
+			times *= 2
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return buf[:n], nil
+	}
+	return nil, errors.New("lz4 decode fail")
 }
 
 func zstdEncode(data []byte) ([]byte, error) {
@@ -119,6 +149,15 @@ func NewZSTDCompressor(minCompressLength int) *compressor {
 		MinCompressLength: minCompressLength,
 		Encode:            zstdEncode,
 		Decode:            zstdDecode,
+	})
+}
+
+// NewLZ4Compressor returns a new lz4 compressor
+func NewLZ4Compressor(minCompressLength int) *compressor {
+	return NewComprsser(CompressorOptions{
+		MinCompressLength: minCompressLength,
+		Encode:            lz4Encode,
+		Decode:            lz4Decode,
 	})
 }
 
