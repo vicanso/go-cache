@@ -79,6 +79,15 @@ func NewZSTDRedisCache(c redis.UniversalClient, compressMinLength int, opts ...R
 	return newCompressRedisCache(c, compressor, opts...)
 }
 
+// NewLZ4RedisCache returns a redis cache with lz4 compressor
+func NewLZ4RedisCache(c redis.UniversalClient, compressMinLength int, opts ...RedisCacheOption) *RedisCache {
+	if compressMinLength <= 0 {
+		panic("compress mini length should be gt 0")
+	}
+	compressor := NewLZ4Compressor(compressMinLength)
+	return newCompressRedisCache(c, compressor, opts...)
+}
+
 // NewCompressRedisCache the same as NewSnappyRedisCache
 func NewCompressRedisCache(c redis.UniversalClient, compressMinLength int, opts ...RedisCacheOption) *RedisCache {
 	return NewSnappyRedisCache(c, compressMinLength, opts...)

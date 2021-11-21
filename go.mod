@@ -9,5 +9,5 @@ require (
 	github.com/klauspost/compress v1.13.6
 	github.com/pierrec/lz4 v2.6.1+incompatible
 	github.com/stretchr/testify v1.7.0
-	github.com/vicanso/lru-ttl v1.3.1
+	github.com/vicanso/lru-ttl v1.3.2
 )

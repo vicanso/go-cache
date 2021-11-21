@@ -34,6 +34,10 @@ type CompressorOptions struct {
 	Encode func([]byte) ([]byte, error)
 	// Decode compress decode function
 	Decode func([]byte) ([]byte, error)
+	// Marshal marshal function
+	Marshal func(v interface{}) ([]byte, error)
+	// Unmarshal unmarshal function
+	Unmarshal func(data []byte, v interface{}) error
 }
 
 func snappyEncode(data []byte) ([]byte, error) {
@@ -58,7 +62,7 @@ func lz4Encode(data []byte) ([]byte, error) {
 
 func lz4Decode(data []byte) ([]byte, error) {
 	times := 10
-	// 扩容三次
+	// 多次扩容
 	for i := 0; i < 3; i++ {
 		buf := make([]byte, len(data)*times)
 		n, err := lz4.UncompressBlock(data, buf)
@@ -95,12 +99,16 @@ func zstdDecode(data []byte) ([]byte, error) {
 // Marshal returns the data marshal by json and compress by decoder.
 // If the size of data <= minCompressLength, it will not compressed.
 func (c *compressor) Marshal(v interface{}) ([]byte, error) {
-	buf, err := json.Marshal(v)
+	marshal := json.Marshal
+	if c.opts.Marshal != nil {
+		marshal = c.opts.Marshal
+	}
+	buf, err := marshal(v)
 	if err != nil {
 		return nil, err
 	}
-	// 不做压缩
 	size := len(buf)
+	// 不做压缩
 	compressType := CompressNone
 	opts := c.opts
 	if size > opts.MinCompressLength {
@@ -131,7 +139,11 @@ func (c *compressor) Unmarshal(data []byte, result interface{}) error {
 		}
 		buf = data
 	}
-	return json.Unmarshal(buf, result)
+	unmarshal := json.Unmarshal
+	if c.opts.Unmarshal != nil {
+		unmarshal = c.opts.Unmarshal
+	}
+	return unmarshal(buf, result)
 }
 
 // NewSnappyCompressor returns a new snappy compressor

@@ -210,44 +210,37 @@ func TestRedisGetSetStruct(t *testing.T) {
 	assert.Equal(redis.Nil, err)
 }
 
-func TestRedisGetSetStructSnappy(t *testing.T) {
+func TestRedisGetSetStructWithCompress(t *testing.T) {
 	assert := assert.New(t)
 	c := newClient()
 	defer c.Close()
-	srv := NewCompressRedisCache(c, 10)
-	key := randomString()
+
 	type T struct {
 		Name string `json:"name,omitempty"`
 	}
-	name := "Snappy Snappy Snappy Snappy Snappy 速度很快"
-	err := srv.SetStruct(context.TODO(), key, &T{
-		Name: name,
-	}, time.Minute)
-	assert.Nil(err)
-
-	result := T{}
-	err = srv.GetStruct(context.TODO(), key, &result)
-	assert.Nil(err)
-	assert.Equal(name, result.Name)
-}
-
-func TestRedisGetSetStructZSTD(t *testing.T) {
-	assert := assert.New(t)
-	c := newClient()
-	defer c.Close()
-	srv := NewZSTDRedisCache(c, 10)
-	key := randomString()
-	type T struct {
-		Name string `json:"name,omitempty"`
+	tests := []struct {
+		cache *RedisCache
+	}{
+		{
+			cache: NewCompressRedisCache(c, 10),
+		},
+		{
+			cache: NewZSTDRedisCache(c, 10),
+		},
+		{
+			cache: NewLZ4RedisCache(c, 10),
+		},
 	}
 	name := "Snappy Snappy Snappy Snappy Snappy 速度很快"
-	err := srv.SetStruct(context.TODO(), key, &T{
-		Name: name,
-	}, time.Minute)
-	assert.Nil(err)
-
-	result := T{}
-	err = srv.GetStruct(context.TODO(), key, &result)
-	assert.Nil(err)
-	assert.Equal(name, result.Name)
+	for _, tt := range tests {
+		key := randomString()
+		err := tt.cache.SetStruct(context.TODO(), key, &T{
+			Name: name,
+		}, time.Minute)
+		assert.Nil(err)
+		result := T{}
+		err = tt.cache.GetStruct(context.TODO(), key, &result)
+		assert.Nil(err)
+		assert.Equal(name, result.Name)
+	}
 }
