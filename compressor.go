@@ -63,7 +63,7 @@ func lz4Encode(data []byte) ([]byte, error) {
 func lz4Decode(data []byte) ([]byte, error) {
 	times := 10
 	// 多次扩容
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 5; i++ {
 		buf := make([]byte, len(data)*times)
 		n, err := lz4.UncompressBlock(data, buf)
 		// 如果长度不够，则加倍
