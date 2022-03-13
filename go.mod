@@ -3,12 +3,11 @@ module github.com/vicanso/go-cache
 go 1.15
 
 require (
-	github.com/frankban/quicktest v1.14.0 // indirect
+	github.com/frankban/quicktest v1.14.2 // indirect
 	github.com/go-redis/redis/v8 v8.11.4
 	github.com/golang/snappy v0.0.4
-	github.com/klauspost/compress v1.14.4
+	github.com/klauspost/compress v1.15.1
 	github.com/pierrec/lz4 v2.6.1+incompatible
 	github.com/stretchr/testify v1.7.0
-	github.com/vicanso/lru-ttl v1.3.2
-	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
+	github.com/vicanso/lru-ttl v1.4.0
 )
