@@ -18,7 +18,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	redis "github.com/go-redis/redis/v8"
 )
 
 type RedisSession struct {

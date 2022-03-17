@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	redis "github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -208,6 +208,28 @@ func TestRedisGetSetStruct(t *testing.T) {
 	// 再次获取则不存在
 	_, err = srv.Get(context.TODO(), key)
 	assert.Equal(redis.Nil, err)
+}
+
+func TestRedisGetSetStructTTL(t *testing.T) {
+	assert := assert.New(t)
+
+	data := map[string]string{
+		"a": "1",
+	}
+
+	c := newClient()
+	defer c.Close()
+	srv := NewRedisCache(c)
+	err := srv.SetStructWithTTL(c.Context(), "key", data, 10*time.Second)
+	assert.Nil(err)
+	time.Sleep(50 * time.Millisecond)
+
+	value := map[string]string{}
+	ttl, err := srv.GetStructAndTTL(c.Context(), "key", &value)
+	assert.Nil(err)
+	assert.Equal(data, value)
+	assert.Less(ttl, 10*time.Second)
+	assert.Greater(ttl, 9*time.Second)
 }
 
 func TestRedisGetSetStructWithCompress(t *testing.T) {

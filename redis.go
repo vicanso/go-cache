@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	redis "github.com/go-redis/redis/v8"
 )
 
 // RedisCache redis cache
@@ -40,6 +40,11 @@ type Done func() error
 // noop noop
 var noop = func() error {
 	return nil
+}
+
+type ttlData struct {
+	ExpiredAt time.Time   `json:"expiredAt"`
+	Data      interface{} `json:"data"`
 }
 
 // NewRedisCache returns a new redis cache
@@ -284,8 +289,7 @@ func (c *RedisCache) doMarshal(value interface{}) ([]byte, error) {
 	return json.Marshal(value)
 }
 
-// GetStruct gets cache and unmarshal to struct
-func (c *RedisCache) GetStruct(ctx context.Context, key string, value interface{}) error {
+func (c *RedisCache) getStruct(ctx context.Context, key string, value interface{}) error {
 	key, err := c.getKey(key)
 	if err != nil {
 		return err
@@ -298,10 +302,31 @@ func (c *RedisCache) GetStruct(ctx context.Context, key string, value interface{
 	return c.doUnmarshal(result, value)
 }
 
+// GetStruct gets cache and unmarshal to struct
+func (c *RedisCache) GetStruct(ctx context.Context, key string, value interface{}) error {
+	return c.getStruct(ctx, key, value)
+}
+
+// GetStructAndTTL gets cache, unmarshal to struct and return the ttl of it. The cache should be set by SetStructWithTTL
+func (c *RedisCache) GetStructAndTTL(ctx context.Context, key string, value interface{}) (time.Duration, error) {
+	data := ttlData{
+		Data: value,
+	}
+	err := c.getStruct(ctx, key, &data)
+	if err != nil {
+		return 0, err
+	}
+	// 如果无设置expired at
+	if data.ExpiredAt.IsZero() {
+		return -1, nil
+	}
+	return time.Until(data.ExpiredAt), nil
+}
+
 // GetStructWithDone gets data from redis and unmarshal to struct,
 // it returns a done function to delete the data.
 func (c *RedisCache) GetStructWithDone(ctx context.Context, key string, value interface{}) (Done, error) {
-	err := c.GetStruct(ctx, key, value)
+	err := c.getStruct(ctx, key, value)
 	if err != nil {
 		return noop, err
 	}
@@ -311,8 +336,7 @@ func (c *RedisCache) GetStructWithDone(ctx context.Context, key string, value in
 	}, nil
 }
 
-// SetStruct marshals struct to bytes and sets to cache, if it will use default ttl if ttl is nil
-func (c *RedisCache) SetStruct(ctx context.Context, key string, value interface{}, ttl ...time.Duration) error {
+func (c *RedisCache) setStruct(ctx context.Context, key string, value interface{}, ttl ...time.Duration) error {
 	key, err := c.getKey(key)
 	if err != nil {
 		return err
@@ -323,6 +347,20 @@ func (c *RedisCache) SetStruct(ctx context.Context, key string, value interface{
 	}
 	d := c.getTTL(ttl...)
 	return c.set(ctx, key, buf, d)
+}
+
+// SetStruct marshals struct to bytes and sets to cache, if it will use default ttl if ttl is nil
+func (c *RedisCache) SetStruct(ctx context.Context, key string, value interface{}, ttl ...time.Duration) error {
+	return c.setStruct(ctx, key, value, ttl...)
+}
+
+// SetStructWithTTL adds expiredAt field to data, marshals data to bytes and sets to cache
+func (c *RedisCache) SetStructWithTTL(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+	data := ttlData{
+		ExpiredAt: time.Now().Add(ttl),
+		Data:      value,
+	}
+	return c.setStruct(ctx, key, data, ttl)
 }
 
 // TTL returns the ttl of the key

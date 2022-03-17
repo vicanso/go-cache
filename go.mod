@@ -8,6 +8,6 @@ require (
 	github.com/golang/snappy v0.0.4
 	github.com/klauspost/compress v1.15.1
 	github.com/pierrec/lz4 v2.6.1+incompatible
-	github.com/stretchr/testify v1.7.0
+	github.com/stretchr/testify v1.7.1
 	github.com/vicanso/lru-ttl v1.4.0
 )
