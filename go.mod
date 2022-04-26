@@ -4,6 +4,8 @@ go 1.18
 
 require (
 	github.com/allegro/bigcache/v3 v3.0.2
+	github.com/golang/snappy v0.0.4
+	github.com/klauspost/compress v1.15.1
 	github.com/stretchr/testify v1.7.1
 )
 

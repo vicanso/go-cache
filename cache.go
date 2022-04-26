@@ -21,83 +21,21 @@ import (
 	"time"
 )
 
-type (
-	Store interface {
-		Set(ctx context.Context, key string, value []byte, ttl ...time.Duration) error
-		Get(ctx context.Context, key string) ([]byte, error)
-		Delete(ctx context.Context, key string) error
-		Close(ctx context.Context) error
-	}
-	Cache struct {
-		keyPrefix string
-		ttl       time.Duration
-		stores    []Store
-	}
-
-	Option struct {
-		store            Store
-		secondaryStore   Store
-		keyPrefix        string
-		cleanWindow      time.Duration
-		maxEntrySize     int
-		hardMaxCacheSize int
-		onRemove         func(key string)
-	}
+const (
+	// CompressNone compress none
+	CompressNone byte = iota
+	// Compressed compress
+	Compressed
 )
 
+type Cache struct {
+	keyPrefix  string
+	ttl        time.Duration
+	stores     []Store
+	compressor Compressor
+}
+
 var ErrNotFound = errors.New("Not found")
-
-type Marshaler interface {
-	Marshal() ([]byte, error)
-}
-type Unmarshaler interface {
-	Unmarshal([]byte) error
-}
-
-// CacheOption cache option
-type CacheOption func(opt *Option)
-
-func CacheCleanWindowOption(cleanWindow time.Duration) CacheOption {
-	return func(opt *Option) {
-		opt.cleanWindow = cleanWindow
-	}
-}
-
-func CacheMaxEntrySizeOption(maxEntrySize int) CacheOption {
-	return func(opt *Option) {
-		opt.maxEntrySize = maxEntrySize
-	}
-}
-
-func CacheHardMaxCacheSizeOption(hardMaxCacheSize int) CacheOption {
-	return func(opt *Option) {
-		opt.hardMaxCacheSize = hardMaxCacheSize
-	}
-}
-
-func CacheOnRemoveOption(onRemove func(key string)) CacheOption {
-	return func(opt *Option) {
-		opt.onRemove = onRemove
-	}
-}
-
-func CacheKeyPrefixOption(keyPrefix string) CacheOption {
-	return func(opt *Option) {
-		opt.keyPrefix = keyPrefix
-	}
-}
-
-func CacheStoreOption(store Store) CacheOption {
-	return func(opt *Option) {
-		opt.store = store
-	}
-}
-
-func CacheSecondaryStoreOption(store Store) CacheOption {
-	return func(opt *Option) {
-		opt.secondaryStore = store
-	}
-}
 
 func New(ttl time.Duration, opts ...CacheOption) (*Cache, error) {
 	opt := Option{}
@@ -122,9 +60,10 @@ func New(ttl time.Duration, opts ...CacheOption) (*Cache, error) {
 	}
 
 	return &Cache{
-		keyPrefix: opt.keyPrefix,
-		ttl:       ttl,
-		stores:    stores,
+		compressor: opt.compressor,
+		keyPrefix:  opt.keyPrefix,
+		ttl:        ttl,
+		stores:     stores,
 	}, nil
 }
 
@@ -151,6 +90,7 @@ func (c *Cache) getTTL(ttl ...time.Duration) time.Duration {
 
 func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, error) {
 	max := len(c.stores)
+	var data []byte
 	for index, s := range c.stores {
 		buf, err := s.Get(ctx, key)
 		// 出错，而且是最后一个store
@@ -160,10 +100,19 @@ func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, error) {
 		}
 		// 如果获取到数据
 		if len(buf) != 0 {
-			return buf, nil
+			data = buf
+			break
 		}
 	}
-	return nil, nil
+	// 如果有配置压缩
+	if c.compressor != nil {
+		buf, err := c.compressor.Decode(data)
+		if err != nil {
+			return nil, err
+		}
+		data = buf
+	}
+	return data, nil
 }
 
 func (c *Cache) GetBytes(ctx context.Context, key string) ([]byte, error) {
@@ -171,6 +120,14 @@ func (c *Cache) GetBytes(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	// 如果有设置解压
+	if c.compressor != nil {
+		buf, err := c.compressor.Encode(value)
+		if err != nil {
+			return err
+		}
+		value = buf
+	}
 	for _, s := range c.stores {
 		err := s.Set(ctx, key, value, ttl)
 		if err != nil {
@@ -185,21 +142,15 @@ func (c *Cache) SetBytes(ctx context.Context, key string, value []byte, ttl ...t
 }
 
 func (c *Cache) Set(ctx context.Context, key string, value any, ttl ...time.Duration) error {
-	var entry []byte
 	marshaler, ok := value.(Marshaler)
+	fn := json.Marshal
 	// 如果本身支持marshal
 	if ok {
-		buf, err := marshaler.Marshal()
-		if err != nil {
-			return err
-		}
-		entry = buf
-	} else {
-		buf, err := json.Marshal(value)
-		if err != nil {
-			return err
-		}
-		entry = buf
+		fn = marshaler.Marshal
+	}
+	entry, err := fn(value)
+	if err != nil {
+		return err
 	}
 	return c.setBytes(ctx, c.getKey(key), entry, c.getTTL(ttl...))
 }
@@ -218,11 +169,12 @@ func (c *Cache) Get(ctx context.Context, key string, value any) error {
 	if err != nil {
 		return err
 	}
+	fn := json.Unmarshal
 	unmarshaler, ok := value.(Unmarshaler)
 	if ok {
-		return unmarshaler.Unmarshal(data)
+		fn = unmarshaler.Unmarshal
 	}
-	return json.Unmarshal(data, value)
+	return fn(data, value)
 }
 
 func (c *Cache) Delete(ctx context.Context, key string) error {

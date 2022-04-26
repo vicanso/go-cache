@@ -15,7 +15,6 @@
 package cache
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -41,55 +40,4 @@ func TestCacheOption(t *testing.T) {
 	assert.Equal(512, opt.maxEntrySize)
 	assert.Equal(1024*1024, opt.hardMaxCacheSize)
 	assert.NotNil(opt.onRemove)
-}
-
-type testData struct {
-	Name string `json:"name"`
-}
-
-type testDataCustom testData
-
-func (t *testDataCustom) Marshal() ([]byte, error) {
-	return []byte(t.Name), nil
-}
-
-func (t *testDataCustom) Unmarshal(data []byte) error {
-	t.Name = string(data)
-	return nil
-}
-
-func TestGetSet(t *testing.T) {
-	assert := assert.New(t)
-
-	c, err := New(1 * time.Second)
-	assert.Nil(err)
-	defer c.Close(context.Background())
-
-	key := "key"
-	err = c.Set(context.Background(), key, &testData{
-		Name: "test data",
-	})
-	assert.Nil(err)
-	data := testData{}
-	err = c.Get(context.Background(), key, &data)
-	assert.Nil(err)
-	assert.Equal("test data", data.Name)
-
-	// custom marshal/unmarshal
-	keyCustom := "keyCustom"
-	err = c.Set(context.Background(), keyCustom, &testDataCustom{
-		Name: "test data custom",
-	})
-	assert.Nil(err)
-	dataCustom := testDataCustom{}
-	err = c.Get(context.Background(), keyCustom, &dataCustom)
-	assert.Nil(err)
-	assert.Equal("test data custom", dataCustom.Name)
-
-	err = c.Get(context.Background(), "abc", nil)
-	assert.Equal(ErrNotFound, err)
-
-	time.Sleep(2 * time.Second)
-	err = c.Get(context.Background(), keyCustom, nil)
-	assert.Equal(ErrNotFound, err)
 }
