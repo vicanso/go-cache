@@ -30,6 +30,7 @@ func TestCacheOption(t *testing.T) {
 		CacheOnRemoveOption(func(key string) {
 		}),
 		CacheKeyPrefixOption("prefix"),
+		CacheZSTDOption(10, 1),
 	}
 	opt := Option{}
 	for _, fn := range fns {
@@ -40,4 +41,5 @@ func TestCacheOption(t *testing.T) {
 	assert.Equal(512, opt.maxEntrySize)
 	assert.Equal(1024*1024, opt.hardMaxCacheSize)
 	assert.NotNil(opt.onRemove)
+	assert.NotNil(opt.compressor)
 }

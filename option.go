@@ -81,13 +81,9 @@ func CacheCompressorOption(compressor Compressor) CacheOption {
 }
 
 func CacheSnappyOption(minCompressLength int) CacheOption {
-	return func(opt *Option) {
-		opt.compressor = NewSnappyCompressor(minCompressLength)
-	}
+	return CacheCompressorOption(NewSnappyCompressor(minCompressLength))
 }
 
 func CacheZSTDOption(minCompressLength, level int) CacheOption {
-	return func(opt *Option) {
-		opt.compressor = NewZSTDCompressor(minCompressLength, level)
-	}
+	return CacheCompressorOption(NewZSTDCompressor(minCompressLength, level))
 }

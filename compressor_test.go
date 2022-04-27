@@ -14,63 +14,51 @@
 
 package cache
 
-// func TestSnappyCompressor(t *testing.T) {
-// 	assert := assert.New(t)
-// 	type Data struct {
-// 		Name string `json:"name,omitempty"`
-// 	}
+import (
+	"testing"
 
-// 	sc := NewSnappyCompressor(50)
-// 	data := &Data{
-// 		Name: "test",
-// 	}
-// 	buf, err := sc.Marshal(data)
-// 	assert.Nil(err)
-// 	assert.Equal("\x00{\"name\":\"test\"}", string(buf))
-// 	unmarshalData := &Data{}
-// 	err = sc.Unmarshal(buf, unmarshalData)
-// 	assert.Nil(err)
-// 	assert.Equal(data.Name, unmarshalData.Name)
+	"github.com/stretchr/testify/assert"
+)
 
-// 	data = &Data{
-// 		Name: "Snappy Snappy Snappy Snappy Snappy 速度很快",
-// 	}
-// 	buf, err = sc.Marshal(data)
-// 	assert.Nil(err)
-// 	assert.Equal("\x01:<{\"name\":\"Snappy n\a\x004速度很快\"}", string(buf))
-// 	unmarshalData = &Data{}
-// 	err = sc.Unmarshal(buf, unmarshalData)
-// 	assert.Nil(err)
-// 	assert.Equal(data.Name, unmarshalData.Name)
+func TestCompressor(t *testing.T) {
+	assert := assert.New(t)
 
-// }
+	shortString := `{"name":"test"}`
+	longString := `{"name":"Snappy Snappy Snappy Snappy Snappy 速度很快"}`
+	tests := []struct {
+		Compressor   Compressor
+		Data         []byte
+		CompressData []byte
+	}{
+		{
+			Compressor:   NewSnappyCompressor(50),
+			Data:         []byte(shortString),
+			CompressData: []byte("\x00{\"name\":\"test\"}"),
+		},
+		{
+			Compressor:   NewSnappyCompressor(50),
+			Data:         []byte(longString),
+			CompressData: []byte("\x01:<{\"name\":\"Snappy n\a\x004速度很快\"}"),
+		},
+		{
+			Compressor:   NewZSTDCompressor(50, 1),
+			Data:         []byte(shortString),
+			CompressData: []byte("\x00{\"name\":\"test\"}"),
+		},
+		{
+			Compressor:   NewZSTDCompressor(50, 1),
+			Data:         []byte(longString),
+			CompressData: []byte("\x01(\xb5/\xfd\x04\x005\x01\x00\xe4\x01{\"name\":\"Snappy 速度很快\"}\x01T\x10\x03\x19\x14\x056\xcfS"),
+		},
+	}
 
-// func TestZSTDCompressor(t *testing.T) {
-// 	assert := assert.New(t)
-// 	type Data struct {
-// 		Name string `json:"name,omitempty"`
-// 	}
+	for _, tt := range tests {
 
-// 	sc := NewZSTDCompressor(50)
-// 	data := &Data{
-// 		Name: "test",
-// 	}
-// 	buf, err := sc.Marshal(data)
-// 	assert.Nil(err)
-// 	assert.Equal("\x00{\"name\":\"test\"}", string(buf))
-// 	unmarshalData := &Data{}
-// 	err = sc.Unmarshal(buf, unmarshalData)
-// 	assert.Nil(err)
-// 	assert.Equal(data.Name, unmarshalData.Name)
-
-// 	data = &Data{
-// 		Name: "Snappy Snappy Snappy Snappy Snappy 速度很快",
-// 	}
-// 	buf, err = sc.Marshal(data)
-// 	assert.Nil(err)
-// 	assert.Equal("\x01(\xb5/\xfd\x04\x005\x01\x00\xe4\x01{\"name\":\"Snappy 速度很快\"}\x01T\x10\x03\x19\x14\x056\xcfS", string(buf))
-// 	unmarshalData = &Data{}
-// 	err = sc.Unmarshal(buf, unmarshalData)
-// 	assert.Nil(err)
-// 	assert.Equal(data.Name, unmarshalData.Name)
-// }
+		buf, err := tt.Compressor.Encode(tt.Data)
+		assert.Nil(err)
+		assert.Equal(tt.CompressData, buf)
+		result, err := tt.Compressor.Decode(buf)
+		assert.Nil(err)
+		assert.Equal(tt.Data, result)
+	}
+}

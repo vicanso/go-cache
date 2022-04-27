@@ -16,30 +16,21 @@ package cache
 
 import (
 	"bytes"
-	"encoding/json"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-type Marshaler interface {
-	Marshal(v any) ([]byte, error)
-}
+func TestMarshal(t *testing.T) {
+	assert := assert.New(t)
 
-type JSONMarshaler struct{}
+	buf, err := marshal(bytes.NewBufferString("abc"))
+	assert.Nil(err)
+	assert.Equal([]byte("abc"), buf)
 
-func (jm *JSONMarshaler) Marshal(v any) ([]byte, error) {
-	return json.Marshal(v)
-}
-
-func marshal(value any) ([]byte, error) {
-	switch data := value.(type) {
-	case *bytes.Buffer:
-		return data.Bytes(), nil
-	default:
-		marshaler, ok := value.(Marshaler)
-		fn := json.Marshal
-		// 如果本身支持marshal
-		if ok {
-			fn = marshaler.Marshal
-		}
-		return fn(value)
-	}
+	buf, err = marshal(map[string]string{
+		"name": "abc",
+	})
+	assert.Nil(err)
+	assert.Equal([]byte(`{"name":"abc"}`), buf)
 }

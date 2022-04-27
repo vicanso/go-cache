@@ -16,7 +16,6 @@ package cache
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 )
@@ -35,7 +34,8 @@ type Cache struct {
 	compressor Compressor
 }
 
-var ErrNotFound = errors.New("Not found")
+var ErrIsNil = errors.New("Data is nil")
+var ErrKeyIsNil = errors.New("Key is nil")
 
 func New(ttl time.Duration, opts ...CacheOption) (*Cache, error) {
 	opt := Option{}
@@ -77,8 +77,11 @@ func (c *Cache) Close(ctx context.Context) error {
 	return nil
 }
 
-func (c *Cache) getKey(key string) string {
-	return c.keyPrefix + key
+func (c *Cache) getKey(key string) (string, error) {
+	if key == "" {
+		return "", ErrKeyIsNil
+	}
+	return c.keyPrefix + key, nil
 }
 
 func (c *Cache) getTTL(ttl ...time.Duration) time.Duration {
@@ -89,6 +92,11 @@ func (c *Cache) getTTL(ttl ...time.Duration) time.Duration {
 }
 
 func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, error) {
+	key, err := c.getKey(key)
+	if err != nil {
+		return nil, err
+	}
+
 	max := len(c.stores)
 	var data []byte
 	for index, s := range c.stores {
@@ -116,10 +124,14 @@ func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (c *Cache) GetBytes(ctx context.Context, key string) ([]byte, error) {
-	return c.getBytes(ctx, c.getKey(key))
+	return c.getBytes(ctx, key)
 }
 
 func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	key, err := c.getKey(key)
+	if err != nil {
+		return err
+	}
 	// 如果有设置解压
 	if c.compressor != nil {
 		buf, err := c.compressor.Encode(value)
@@ -138,21 +150,15 @@ func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttl time
 }
 
 func (c *Cache) SetBytes(ctx context.Context, key string, value []byte, ttl ...time.Duration) error {
-	return c.setBytes(ctx, c.getKey(key), value, c.getTTL(ttl...))
+	return c.setBytes(ctx, key, value, c.getTTL(ttl...))
 }
 
 func (c *Cache) Set(ctx context.Context, key string, value any, ttl ...time.Duration) error {
-	marshaler, ok := value.(Marshaler)
-	fn := json.Marshal
-	// 如果本身支持marshal
-	if ok {
-		fn = marshaler.Marshal
-	}
-	entry, err := fn(value)
+	entry, err := marshal(value)
 	if err != nil {
 		return err
 	}
-	return c.setBytes(ctx, c.getKey(key), entry, c.getTTL(ttl...))
+	return c.setBytes(ctx, key, entry, c.getTTL(ttl...))
 }
 
 func Get[T any](ctx context.Context, c *Cache, key string) (*T, error) {
@@ -165,21 +171,18 @@ func Get[T any](ctx context.Context, c *Cache, key string) (*T, error) {
 }
 
 func (c *Cache) Get(ctx context.Context, key string, value any) error {
-	data, err := c.getBytes(ctx, c.getKey(key))
+	data, err := c.getBytes(ctx, key)
 	if err != nil {
 		return err
 	}
-	fn := json.Unmarshal
-	unmarshaler, ok := value.(Unmarshaler)
-	if ok {
-		fn = unmarshaler.Unmarshal
-	}
-	return fn(data, value)
+	return unmarshal(data, value)
 }
 
 func (c *Cache) Delete(ctx context.Context, key string) error {
-	key = c.getKey(key)
-	var err error
+	key, err := c.getKey(key)
+	if err != nil {
+		return err
+	}
 	for _, s := range c.stores {
 		e := s.Delete(ctx, key)
 		// 无论是否出错均继续删除

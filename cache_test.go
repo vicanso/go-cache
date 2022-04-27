@@ -37,7 +37,23 @@ func (t *testDataCustom) Unmarshal(data []byte, v any) error {
 	return nil
 }
 
-func TestGetSet(t *testing.T) {
+func TestCacheGetKey(t *testing.T) {
+	assert := assert.New(t)
+
+	c, err := New(
+		1*time.Second,
+		CacheKeyPrefixOption("prefix:"),
+	)
+	assert.Nil(err)
+
+	_, err = c.getKey("")
+	assert.Equal(ErrKeyIsNil, err)
+	key, err := c.getKey("a")
+	assert.Nil(err)
+	assert.Equal("prefix:a", key)
+}
+
+func TestCacheGetSet(t *testing.T) {
 	assert := assert.New(t)
 
 	c, err := New(1 * time.Second)
@@ -65,10 +81,77 @@ func TestGetSet(t *testing.T) {
 	assert.Nil(err)
 	assert.Equal("test data custom", dataCustom.Name)
 
+	result, err := Get[testDataCustom](context.Background(), c, keyCustom)
+	assert.Nil(err)
+	assert.Equal("test data custom", result.Name)
+
 	err = c.Get(context.Background(), "abc", nil)
-	assert.Equal(ErrNotFound, err)
+	assert.Equal(ErrIsNil, err)
 
 	time.Sleep(2 * time.Second)
 	err = c.Get(context.Background(), keyCustom, nil)
-	assert.Equal(ErrNotFound, err)
+	assert.Equal(ErrIsNil, err)
+}
+
+func TestCacheCompress(t *testing.T) {
+	assert := assert.New(t)
+
+	store, err := newBigCacheStore(time.Minute, &Option{})
+	assert.Nil(err)
+	c, err := New(
+		time.Minute,
+		CacheStoreOption(store),
+		CacheSnappyOption(1),
+	)
+	assert.Nil(err)
+	defer c.Close(context.Background())
+
+	key := "key"
+	value := []byte("Hello World!Hello World!Hello World!")
+	err = c.SetBytes(context.Background(), key, value)
+	assert.Nil(err)
+
+	buf, err := store.Get(context.Background(), key)
+	assert.Nil(err)
+	assert.True(len(buf) < len(value))
+
+	buf, err = c.GetBytes(context.Background(), key)
+	assert.Nil(err)
+	assert.Equal(value, buf)
+}
+
+func TestCacheMultiStore(t *testing.T) {
+	assert := assert.New(t)
+
+	s1, err := newBigCacheStore(time.Minute, &Option{})
+	assert.Nil(err)
+	s2, err := newBigCacheStore(time.Minute, &Option{})
+	assert.Nil(err)
+
+	c, err := New(
+		time.Minute,
+		CacheStoreOption(s1),
+		CacheSecondaryStoreOption(s2),
+	)
+	assert.Nil(err)
+	defer c.Close(context.Background())
+
+	key := "key"
+	value := []byte("value")
+	err = c.SetBytes(context.Background(), key, value)
+	assert.Nil(err)
+	buf, err := s1.Get(context.Background(), key)
+	assert.Nil(err)
+	assert.Equal(value, buf)
+	buf, err = s2.Get(context.Background(), key)
+	assert.Nil(err)
+	assert.Equal(value, buf)
+
+	err = c.Delete(context.Background(), key)
+	assert.Nil(err)
+
+	_, err = s1.Get(context.Background(), key)
+	assert.Equal(ErrIsNil, err)
+	_, err = s2.Get(context.Background(), key)
+	assert.Equal(ErrIsNil, err)
 }

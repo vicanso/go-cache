@@ -15,6 +15,7 @@
 package cache
 
 import (
+	"bytes"
 	"encoding/json"
 )
 
@@ -26,4 +27,19 @@ type JSONUnmarshaler struct{}
 
 func (ju *JSONUnmarshaler) Unmarshal(data []byte, value any) error {
 	return json.Unmarshal(data, value)
+}
+
+func unmarshal(data []byte, value any) error {
+	switch v := value.(type) {
+	case *bytes.Buffer:
+		v.Write(data)
+		return nil
+	default:
+		fn := json.Unmarshal
+		unmarshaler, ok := value.(Unmarshaler)
+		if ok {
+			fn = unmarshaler.Unmarshal
+		}
+		return fn(data, value)
+	}
 }
