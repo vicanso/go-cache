@@ -37,6 +37,7 @@ type Cache struct {
 var ErrIsNil = errors.New("Data is nil")
 var ErrKeyIsNil = errors.New("Key is nil")
 
+// New creates a new cache with default ttl
 func New(ttl time.Duration, opts ...CacheOption) (*Cache, error) {
 	opt := Option{}
 	for _, fn := range opts {
@@ -67,6 +68,7 @@ func New(ttl time.Duration, opts ...CacheOption) (*Cache, error) {
 	}, nil
 }
 
+// Close closes all stores of cache
 func (c *Cache) Close(ctx context.Context) error {
 	for _, s := range c.stores {
 		err := s.Close(ctx)
@@ -123,6 +125,7 @@ func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, error) {
 	return data, nil
 }
 
+// GetBytes gets the data from cache
 func (c *Cache) GetBytes(ctx context.Context, key string) ([]byte, error) {
 	return c.getBytes(ctx, key)
 }
@@ -149,10 +152,12 @@ func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttl time
 	return nil
 }
 
+// SetBytes sets the data to cache
 func (c *Cache) SetBytes(ctx context.Context, key string, value []byte, ttl ...time.Duration) error {
 	return c.setBytes(ctx, key, value, c.getTTL(ttl...))
 }
 
+// Set marshals the value to bytes and sets to cache
 func (c *Cache) Set(ctx context.Context, key string, value any, ttl ...time.Duration) error {
 	entry, err := marshal(value)
 	if err != nil {
@@ -170,6 +175,7 @@ func Get[T any](ctx context.Context, c *Cache, key string) (*T, error) {
 	return v, nil
 }
 
+// Get gets the value for cache and unmarshals it
 func (c *Cache) Get(ctx context.Context, key string, value any) error {
 	data, err := c.getBytes(ctx, key)
 	if err != nil {
@@ -178,6 +184,7 @@ func (c *Cache) Get(ctx context.Context, key string, value any) error {
 	return unmarshal(data, value)
 }
 
+// Delete deletes all the data from all stores
 func (c *Cache) Delete(ctx context.Context, key string) error {
 	key, err := c.getKey(key)
 	if err != nil {

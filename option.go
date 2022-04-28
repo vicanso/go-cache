@@ -32,58 +32,68 @@ type Option struct {
 // CacheOption cache option
 type CacheOption func(opt *Option)
 
+// CacheCleanWindowOption set clean window for bigcache store
 func CacheCleanWindowOption(cleanWindow time.Duration) CacheOption {
 	return func(opt *Option) {
 		opt.cleanWindow = cleanWindow
 	}
 }
 
+// CacheMaxEntrySizeOption set max entry size for bigcache store
 func CacheMaxEntrySizeOption(maxEntrySize int) CacheOption {
 	return func(opt *Option) {
 		opt.maxEntrySize = maxEntrySize
 	}
 }
 
+// CacheHardMaxCacheSizeOption set hard max cache size for bigcache store
 func CacheHardMaxCacheSizeOption(hardMaxCacheSize int) CacheOption {
 	return func(opt *Option) {
 		opt.hardMaxCacheSize = hardMaxCacheSize
 	}
 }
 
+// CacheOnRemoveOption set on remove function for bigcache store
 func CacheOnRemoveOption(onRemove func(key string)) CacheOption {
 	return func(opt *Option) {
 		opt.onRemove = onRemove
 	}
 }
 
+// CacheKeyPrefixOption set key prefix for store
 func CacheKeyPrefixOption(keyPrefix string) CacheOption {
 	return func(opt *Option) {
 		opt.keyPrefix = keyPrefix
 	}
 }
 
+// CacheStoreOption set custom store for cache, the bigcache store will be used as default
 func CacheStoreOption(store Store) CacheOption {
 	return func(opt *Option) {
 		opt.store = store
 	}
 }
 
+// CacheSecondaryStoreOption set secondary store for cache, it is slower with greater capacity
 func CacheSecondaryStoreOption(store Store) CacheOption {
 	return func(opt *Option) {
 		opt.secondaryStore = store
 	}
 }
 
+// CacheCompressorOption set compressor for store, the data will be compressed if matched
 func CacheCompressorOption(compressor Compressor) CacheOption {
 	return func(opt *Option) {
 		opt.compressor = compressor
 	}
 }
 
+// CacheSnappyOption set snappy compress for store
 func CacheSnappyOption(minCompressLength int) CacheOption {
 	return CacheCompressorOption(NewSnappyCompressor(minCompressLength))
 }
 
+// CacheZSTDOption set zstd compress for store
 func CacheZSTDOption(minCompressLength, level int) CacheOption {
 	return CacheCompressorOption(NewZSTDCompressor(minCompressLength, level))
 }

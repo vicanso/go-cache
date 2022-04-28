@@ -19,15 +19,22 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// Compressor is the interface that support
+// encode and decode function for compression.
+//
+// Match returns the size is matched for compress
 type Compressor interface {
 	Match(size int) (matched bool)
 	Encode(data []byte) ([]byte, error)
 	Decode(data []byte) ([]byte, error)
 }
 type CompressorOption struct {
+	// MinCompressLength min compress length
 	MinCompressLength int
-	Encode            func(data []byte) ([]byte, error)
-	Decode            func(data []byte) ([]byte, error)
+	// Encode encode function
+	Encode func(data []byte) ([]byte, error)
+	// Decode decode function
+	Decode func(data []byte) ([]byte, error)
 }
 
 func snappyEncode(data []byte) ([]byte, error) {
@@ -103,6 +110,7 @@ func (c *compressor) Match(size int) bool {
 	return size > c.minCompressLength
 }
 
+// NewCompressor creates a new compressor
 func NewCompressor(opt CompressorOption) Compressor {
 	return &compressor{
 		minCompressLength: opt.MinCompressLength,
@@ -111,6 +119,7 @@ func NewCompressor(opt CompressorOption) Compressor {
 	}
 }
 
+// NewZSTDCompressor creates a zstd compressor
 func NewZSTDCompressor(minCompressLength, level int) Compressor {
 	return NewCompressor(CompressorOption{
 		MinCompressLength: minCompressLength,
@@ -121,6 +130,7 @@ func NewZSTDCompressor(minCompressLength, level int) Compressor {
 	})
 }
 
+// NewSnappyCompressor creates a snappy compressor
 func NewSnappyCompressor(minCompressLength int) Compressor {
 	return NewCompressor(CompressorOption{
 		MinCompressLength: minCompressLength,

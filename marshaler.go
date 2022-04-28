@@ -23,12 +23,6 @@ type Marshaler interface {
 	Marshal(v any) ([]byte, error)
 }
 
-type JSONMarshaler struct{}
-
-func (jm *JSONMarshaler) Marshal(v any) ([]byte, error) {
-	return json.Marshal(v)
-}
-
 func marshal(value any) ([]byte, error) {
 	switch data := value.(type) {
 	case *bytes.Buffer:

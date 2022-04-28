@@ -23,12 +23,6 @@ type Unmarshaler interface {
 	Unmarshal(data []byte, value any) error
 }
 
-type JSONUnmarshaler struct{}
-
-func (ju *JSONUnmarshaler) Unmarshal(data []byte, value any) error {
-	return json.Unmarshal(data, value)
-}
-
 func unmarshal(data []byte, value any) error {
 	switch v := value.(type) {
 	case *bytes.Buffer:

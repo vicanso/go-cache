@@ -16,6 +16,7 @@ package cache
 
 import (
 	"context"
+	"encoding/binary"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -41,10 +42,7 @@ var noop = func() error {
 	return nil
 }
 
-type ttlData struct {
-	ExpiredAt time.Time `json:"expiredAt"`
-	Data      any       `json:"data"`
-}
+const timestampByteSize = 8
 
 func RedisCacheTTLOption(ttl time.Duration) RedisCacheOption {
 	return func(c *RedisCache) {
@@ -242,18 +240,29 @@ func (c *RedisCache) GetStruct(ctx context.Context, key string, value any) error
 
 // GetStructAndTTL gets cache, unmarshal to struct and return the ttl of it. The cache should be set by SetStructWithTTL
 func (c *RedisCache) GetStructAndTTL(ctx context.Context, key string, value any) (time.Duration, error) {
-	data := ttlData{
-		Data: value,
-	}
-	err := c.getStruct(ctx, key, &data)
+	key, err := c.getKey(key)
 	if err != nil {
 		return 0, err
 	}
+	buf, err := c.getBytes(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+	err = unmarshal(buf[timestampByteSize:], value)
+	if err != nil {
+		return 0, err
+	}
+
+	timestamp := int64(binary.BigEndian.Uint64(buf))
+	sec := timestamp / int64(time.Second)
+	nsec := timestamp % int64(time.Second)
+
+	expiredAt := time.Unix(sec, nsec)
 	// 如果无设置expired at
-	if data.ExpiredAt.IsZero() {
+	if expiredAt.IsZero() {
 		return -1, nil
 	}
-	return time.Until(data.ExpiredAt), nil
+	return time.Until(expiredAt), nil
 }
 
 // GetStructWithDone gets data from redis and unmarshal to struct,
@@ -289,11 +298,20 @@ func (c *RedisCache) SetStruct(ctx context.Context, key string, value any, ttl .
 
 // SetStructWithTTL adds expiredAt field to data, marshals data to bytes and sets to cache
 func (c *RedisCache) SetStructWithTTL(ctx context.Context, key string, value any, ttl time.Duration) error {
-	data := ttlData{
-		ExpiredAt: time.Now().Add(ttl),
-		Data:      value,
+	key, err := c.getKey(key)
+	if err != nil {
+		return err
 	}
-	return c.setStruct(ctx, key, data, ttl)
+	buf, err := marshal(value)
+	if err != nil {
+		return err
+	}
+	timestamp := time.Now().Add(ttl).UnixNano()
+	data := make([]byte, len(buf)+timestampByteSize)
+	binary.BigEndian.PutUint64(data, uint64(timestamp))
+	copy(data[timestampByteSize:], buf)
+
+	return c.setBytes(ctx, key, data, ttl)
 }
 
 // TTL returns the ttl of the key

@@ -18,6 +18,7 @@ import (
 	"time"
 )
 
+// Store interface for cache
 type Store interface {
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 	Get(ctx context.Context, key string) ([]byte, error)
