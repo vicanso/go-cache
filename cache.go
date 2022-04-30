@@ -130,6 +130,9 @@ func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, time.Duration
 			break
 		}
 	}
+	if len(data) == 0 {
+		return nil, 0, ErrIsNil
+	}
 
 	// 如果有配置压缩
 	if c.compressor != nil {

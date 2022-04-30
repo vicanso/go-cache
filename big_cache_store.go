@@ -30,17 +30,11 @@ func (bcs *bigCacheStore) Set(_ context.Context, key string, value []byte, _ tim
 }
 
 func (bcs *bigCacheStore) Get(_ context.Context, key string) ([]byte, error) {
-	entry, resp, err := bcs.client.GetWithInfo(key)
-	if err != nil {
-		if err == bigcache.ErrEntryNotFound {
-			err = ErrIsNil
-		}
-		return nil, err
+	buf, err := bcs.client.Get(key)
+	if err == bigcache.ErrEntryNotFound {
+		err = ErrIsNil
 	}
-	if resp.EntryStatus != 0 || len(entry) == 0 {
-		return nil, ErrIsNil
-	}
-	return entry, nil
+	return buf, err
 }
 
 func (bcs *bigCacheStore) Close(_ context.Context) error {

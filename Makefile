@@ -15,3 +15,6 @@ lint:
 
 hooks:
 	cp hooks/* .git/hooks/
+
+bench:
+	go test --benchmem -bench=. ./...
