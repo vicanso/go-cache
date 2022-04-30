@@ -16,7 +16,6 @@ package cache
 
 import (
 	"context"
-	"encoding/binary"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -41,8 +40,6 @@ type Done func() error
 var noop = func() error {
 	return nil
 }
-
-const timestampByteSize = 8
 
 func RedisCacheTTLOption(ttl time.Duration) RedisCacheOption {
 	return func(c *RedisCache) {
@@ -253,11 +250,7 @@ func (c *RedisCache) GetStructAndTTL(ctx context.Context, key string, value any)
 		return 0, err
 	}
 
-	timestamp := int64(binary.BigEndian.Uint64(buf))
-	sec := timestamp / int64(time.Second)
-	nsec := timestamp % int64(time.Second)
-
-	expiredAt := time.Unix(sec, nsec)
+	expiredAt := getTimeFromBytes(buf)
 	// 如果无设置expired at
 	if expiredAt.IsZero() {
 		return -1, nil
@@ -306,9 +299,8 @@ func (c *RedisCache) SetStructWithTTL(ctx context.Context, key string, value any
 	if err != nil {
 		return err
 	}
-	timestamp := time.Now().Add(ttl).UnixNano()
 	data := make([]byte, len(buf)+timestampByteSize)
-	binary.BigEndian.PutUint64(data, uint64(timestamp))
+	writeTimeToBytes(time.Now().Add(ttl), data)
 	copy(data[timestampByteSize:], buf)
 
 	return c.setBytes(ctx, key, data, ttl)

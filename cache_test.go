@@ -142,10 +142,22 @@ func TestCacheMultiStore(t *testing.T) {
 	assert.Nil(err)
 	buf, err := s1.Get(context.Background(), key)
 	assert.Nil(err)
-	assert.Equal(value, buf)
+	assert.Equal(value, buf[timestampByteSize:])
 	buf, err = s2.Get(context.Background(), key)
 	assert.Nil(err)
-	assert.Equal(value, buf)
+	assert.Equal(value, buf[timestampByteSize:])
+
+	// 一级缓存清除
+	err = s1.Delete(context.Background(), key)
+	assert.Nil(err)
+	_, err = s1.Get(context.Background(), key)
+	assert.Equal(ErrIsNil, err)
+	// 获取时会重新更新一级缓存
+	buf, err = c.GetBytes(context.Background(), key)
+	assert.Nil(err)
+	assert.NotEmpty(buf)
+	_, err = s1.Get(context.Background(), key)
+	assert.Nil(err)
 
 	err = c.Delete(context.Background(), key)
 	assert.Nil(err)
@@ -154,4 +166,15 @@ func TestCacheMultiStore(t *testing.T) {
 	assert.Equal(ErrIsNil, err)
 	_, err = s2.Get(context.Background(), key)
 	assert.Equal(ErrIsNil, err)
+}
+
+func BenchmarkBigcache(b *testing.B) {
+	c, _ := New(time.Minute, CacheHardMaxCacheSizeOption(1))
+	for i := 0; i < b.N; i++ {
+		key := randomString()
+		err := c.SetBytes(context.Background(), key, []byte(key), time.Second)
+		if err != nil {
+			panic(err)
+		}
+	}
 }

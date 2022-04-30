@@ -93,40 +93,63 @@ func (c *Cache) getTTL(ttl ...time.Duration) time.Duration {
 	return c.ttl
 }
 
-func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, error) {
+func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, time.Duration, error) {
 	key, err := c.getKey(key)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	max := len(c.stores)
 	var data []byte
+	var expiredAt time.Time
+	now := time.Now()
+	var ttl time.Duration
 	for index, s := range c.stores {
 		buf, err := s.Get(ctx, key)
 		// 出错，而且是最后一个store
 		// 则直接返回
 		if err != nil && index == max-1 {
-			return nil, err
+			return nil, 0, err
 		}
 		// 如果获取到数据
-		if len(buf) != 0 {
-			data = buf
+		if len(buf) >= timestampByteSize {
+			expiredAt = getTimeFromBytes(buf)
+			// 如果已过期，继续查询
+			ttl = expiredAt.Sub(now)
+			if ttl < 0 {
+				continue
+			}
+			// 第一个store的数据已过期，将数据重新设置至store
+			// 一般情况下index为0，由于bigcache可能因为空间不足导致数据清除
+			// 或者二级缓存是redis，其它实例有更新
+			if index != 0 {
+				// 设置失败则忽略
+				_ = c.stores[0].Set(ctx, key, buf, ttl)
+			}
+			data = buf[timestampByteSize:]
 			break
 		}
 	}
+
 	// 如果有配置压缩
 	if c.compressor != nil {
 		buf, err := c.compressor.Decode(data)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		data = buf
 	}
-	return data, nil
+	return data, ttl, nil
 }
 
 // GetBytes gets the data from cache
 func (c *Cache) GetBytes(ctx context.Context, key string) ([]byte, error) {
+	buf, _, err := c.getBytes(ctx, key)
+	return buf, err
+}
+
+// GetBytesAndTTL gets the data from cache and the ttl of data
+func (c *Cache) GetBytesAndTTL(ctx context.Context, key string) ([]byte, time.Duration, error) {
 	return c.getBytes(ctx, key)
 }
 
@@ -143,8 +166,12 @@ func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttl time
 		}
 		value = buf
 	}
+	// 增加ttl至value中
+	data := make([]byte, len(value)+timestampByteSize)
+	writeTimeToBytes(time.Now().Add(ttl), data)
+	copy(data[timestampByteSize:], value)
 	for _, s := range c.stores {
-		err := s.Set(ctx, key, value, ttl)
+		err := s.Set(ctx, key, data, ttl)
 		if err != nil {
 			return err
 		}
@@ -175,13 +202,26 @@ func Get[T any](ctx context.Context, c *Cache, key string) (*T, error) {
 	return v, nil
 }
 
-// Get gets the value for cache and unmarshals it
+// Get gets the value from cache and unmarshals it
 func (c *Cache) Get(ctx context.Context, key string, value any) error {
-	data, err := c.getBytes(ctx, key)
+	data, _, err := c.getBytes(ctx, key)
 	if err != nil {
 		return err
 	}
 	return unmarshal(data, value)
+}
+
+// GetAndTTL gets the value from cache and unmarshals it, and returns the ttl of value
+func (c *Cache) GetAndTTL(ctx context.Context, key string, value any) (time.Duration, error) {
+	data, ttl, err := c.getBytes(ctx, key)
+	if err != nil {
+		return 0, err
+	}
+	err = unmarshal(data, value)
+	if err != nil {
+		return 0, err
+	}
+	return ttl, nil
 }
 
 // Delete deletes all the data from all stores
