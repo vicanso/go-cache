@@ -25,6 +25,7 @@ type Option struct {
 	cleanWindow      time.Duration
 	maxEntrySize     int
 	hardMaxCacheSize int
+	shards           int
 	compressor       Compressor
 	onRemove         func(key string)
 }
@@ -50,6 +51,13 @@ func CacheMaxEntrySizeOption(maxEntrySize int) CacheOption {
 func CacheHardMaxCacheSizeOption(hardMaxCacheSize int) CacheOption {
 	return func(opt *Option) {
 		opt.hardMaxCacheSize = hardMaxCacheSize
+	}
+}
+
+// CacheShardsOption set shards for bigcache store
+func CacheShardsOption(shards int) CacheOption {
+	return func(opt *Option) {
+		opt.shards = shards
 	}
 }
 

@@ -47,6 +47,10 @@ func (bcs *bigCacheStore) Delete(_ context.Context, key string) error {
 
 func newBigCacheStore(ttl time.Duration, opt *Option) (Store, error) {
 	conf := bigcache.DefaultConfig(ttl)
+	// 设置默认的shards
+	// 因为常用的场景为初始化多个store
+	// 因此默认的shard使用较小的值即可
+	conf.Shards = 1 << 3
 	if opt.cleanWindow > time.Second {
 		conf.CleanWindow = opt.cleanWindow
 	}
@@ -60,6 +64,9 @@ func newBigCacheStore(ttl time.Duration, opt *Option) (Store, error) {
 		conf.OnRemove = func(key string, _ []byte) {
 			opt.onRemove(key)
 		}
+	}
+	if opt.shards > 0 {
+		conf.Shards = opt.shards
 	}
 	c, err := bigcache.NewBigCache(conf)
 	if err != nil {
