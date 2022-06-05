@@ -120,6 +120,19 @@ func TestCacheCompress(t *testing.T) {
 	assert.Equal(value, buf)
 }
 
+func TestCacheGetTTL(t *testing.T) {
+	assert := assert.New(t)
+	c := Cache{
+		ttlList: []time.Duration{
+			time.Second,
+			2 * time.Second,
+		},
+	}
+	assert.Equal(3*time.Second, c.getTTL(0, 3*time.Second))
+	assert.Equal(time.Second, c.getTTL(0))
+	assert.Equal(2*time.Second, c.getTTL(1))
+}
+
 func TestCacheMultiStore(t *testing.T) {
 	assert := assert.New(t)
 
