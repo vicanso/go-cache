@@ -31,6 +31,10 @@ func TestCacheOption(t *testing.T) {
 		}),
 		CacheKeyPrefixOption("prefix"),
 		CacheZSTDOption(10, 1),
+		CacheMultiTTLOption([]time.Duration{
+			time.Second,
+			2 * time.Second,
+		}),
 	}
 	opt := Option{}
 	for _, fn := range fns {
@@ -42,4 +46,8 @@ func TestCacheOption(t *testing.T) {
 	assert.Equal(1024*1024, opt.hardMaxCacheSize)
 	assert.NotNil(opt.onRemove)
 	assert.NotNil(opt.compressor)
+	assert.Equal([]time.Duration{
+		time.Second,
+		2 * time.Second,
+	}, opt.ttlList)
 }

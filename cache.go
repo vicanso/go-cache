@@ -29,7 +29,7 @@ const (
 
 type Cache struct {
 	keyPrefix  string
-	ttl        time.Duration
+	ttlList    []time.Duration
 	stores     []Store
 	compressor Compressor
 }
@@ -59,11 +59,17 @@ func New(ttl time.Duration, opts ...CacheOption) (*Cache, error) {
 	if opt.secondaryStore != nil {
 		stores = append(stores, opt.secondaryStore)
 	}
+	ttlList := opt.ttlList
+	if len(ttlList) == 0 {
+		ttlList = []time.Duration{
+			ttl,
+		}
+	}
 
 	return &Cache{
 		compressor: opt.compressor,
 		keyPrefix:  opt.keyPrefix,
-		ttl:        ttl,
+		ttlList:    ttlList,
 		stores:     stores,
 	}, nil
 }
@@ -86,11 +92,14 @@ func (c *Cache) getKey(key string) (string, error) {
 	return c.keyPrefix + key, nil
 }
 
-func (c *Cache) getTTL(ttl ...time.Duration) time.Duration {
+func (c *Cache) getTTL(index int, ttl ...time.Duration) time.Duration {
 	if len(ttl) != 0 {
 		return ttl[0]
 	}
-	return c.ttl
+	if len(c.ttlList) > index {
+		return c.ttlList[index]
+	}
+	return c.ttlList[0]
 }
 
 func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, time.Duration, error) {
@@ -156,7 +165,7 @@ func (c *Cache) GetBytesAndTTL(ctx context.Context, key string) ([]byte, time.Du
 	return c.getBytes(ctx, key)
 }
 
-func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttls ...time.Duration) error {
 	key, err := c.getKey(key)
 	if err != nil {
 		return err
@@ -171,9 +180,10 @@ func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttl time
 	}
 	// 增加ttl至value中
 	data := make([]byte, len(value)+timestampByteSize)
-	writeTimeToBytes(time.Now().Add(ttl), data)
 	copy(data[timestampByteSize:], value)
-	for _, s := range c.stores {
+	for index, s := range c.stores {
+		ttl := c.getTTL(index, ttls...)
+		writeTimeToBytes(time.Now().Add(ttl), data)
 		err := s.Set(ctx, key, data, ttl)
 		if err != nil {
 			return err
@@ -184,7 +194,7 @@ func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttl time
 
 // SetBytes sets the data to cache
 func (c *Cache) SetBytes(ctx context.Context, key string, value []byte, ttl ...time.Duration) error {
-	return c.setBytes(ctx, key, value, c.getTTL(ttl...))
+	return c.setBytes(ctx, key, value, ttl...)
 }
 
 // Set marshals the value to bytes and sets to cache
@@ -193,7 +203,7 @@ func (c *Cache) Set(ctx context.Context, key string, value any, ttl ...time.Dura
 	if err != nil {
 		return err
 	}
-	return c.setBytes(ctx, key, entry, c.getTTL(ttl...))
+	return c.setBytes(ctx, key, entry, ttl...)
 }
 
 func Get[T any](ctx context.Context, c *Cache, key string) (*T, error) {

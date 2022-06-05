@@ -22,6 +22,7 @@ type Option struct {
 	store            Store
 	secondaryStore   Store
 	keyPrefix        string
+	ttlList          []time.Duration
 	cleanWindow      time.Duration
 	maxEntrySize     int
 	hardMaxCacheSize int
@@ -104,4 +105,11 @@ func CacheSnappyOption(minCompressLength int) CacheOption {
 // CacheZSTDOption set zstd compress for store
 func CacheZSTDOption(minCompressLength, level int) CacheOption {
 	return CacheCompressorOption(NewZSTDCompressor(minCompressLength, level))
+}
+
+// CacheMultiTTLOption set multi ttl for store
+func CacheMultiTTLOption(ttlList []time.Duration) CacheOption {
+	return func(opt *Option) {
+		opt.ttlList = ttlList
+	}
 }
