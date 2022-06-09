@@ -132,6 +132,14 @@ func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, time.Duration
 			// 一般情况下index为0，由于bigcache可能因为空间不足导致数据清除
 			// 或者二级缓存是redis，其它实例有更新
 			if index != 0 {
+				// 如果当前缓存对应的ttl
+				// 少于其它缓存的ttl，则
+				// 使用新的ttl来修改记录
+				newTTL := c.getTTL(index, ttl)
+				if newTTL < ttl {
+					ttl = newTTL
+					writeTimeToBytes(time.Now().Add(ttl), data)
+				}
 				// 设置失败则忽略
 				_ = c.stores[0].Set(ctx, key, buf, ttl)
 			}
