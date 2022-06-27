@@ -20,8 +20,12 @@ import (
 
 // Store interface for cache
 type Store interface {
+	// Set sets data to store, the value should be copy before save to store
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
+	// Get gets data from store
 	Get(ctx context.Context, key string) ([]byte, error)
+	// Delete deletes data form store
 	Delete(ctx context.Context, key string) error
+	// Close closes the store
 	Close(ctx context.Context) error
 }

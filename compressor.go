@@ -24,8 +24,11 @@ import (
 //
 // Match returns the size is matched for compress
 type Compressor interface {
+	// Match tests the data should be compressed
 	Match(size int) (matched bool)
+	// Encode encodes the data
 	Encode(data []byte) ([]byte, error)
+	// Decode decodes the data
 	Decode(data []byte) ([]byte, error)
 }
 type CompressorOption struct {
