@@ -133,15 +133,16 @@ func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, time.Duration
 			// 或者二级缓存是redis，其它实例有操作更新
 			if index != 0 {
 				// 如果当前缓存对应的ttl
-				// 少于其它缓存的ttl，则
+				// 少于第一个缓存的ttl(内存缓存有效期有可能较短），则
 				// 使用新的ttl来修改记录
-				newTTL := c.getTTL(index, ttl)
+				firstIndex := 0
+				newTTL := c.getTTL(firstIndex, ttl)
 				if newTTL < ttl {
 					ttl = newTTL
 					writeTimeToBytes(time.Now().Add(ttl), data)
 				}
 				// 设置失败则忽略
-				_ = c.stores[0].Set(ctx, key, buf, ttl)
+				_ = c.stores[firstIndex].Set(ctx, key, buf, ttl)
 			}
 			data = buf[timestampByteSize:]
 			break

@@ -26,6 +26,13 @@ c, err := cache.New(
     cache.CacheKeyPrefixOption("prefix:"),
     // 指定二级缓存
     cache.CacheSecondaryStoreOption(cache.NewRedisStore(redisClient)),
+    // 指定不同的缓存使用不同的ttl
+    cache.CacheMultiTTLOption([]time.Duration{
+        // 一级缓存有效期
+        time.Minute,
+        // 二级缓存有效期
+        10 * time.Minute,
+    }),
 )
 ```
 

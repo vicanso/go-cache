@@ -174,11 +174,58 @@ func TestCacheMultiStore(t *testing.T) {
 
 	err = c.Delete(context.Background(), key)
 	assert.Nil(err)
+}
 
-	_, err = s1.Get(context.Background(), key)
-	assert.Equal(ErrIsNil, err)
-	_, err = s2.Get(context.Background(), key)
-	assert.Equal(ErrIsNil, err)
+func TestCacheMultiTTL(t *testing.T) {
+	assert := assert.New(t)
+	s1, err := newBigCacheStore(time.Minute, &Option{})
+	assert.Nil(err)
+	s2, err := newBigCacheStore(time.Minute, &Option{})
+	assert.Nil(err)
+
+	c, err := New(
+		time.Minute,
+		CacheStoreOption(s1),
+		CacheSecondaryStoreOption(s2),
+		CacheMultiTTLOption([]time.Duration{
+			time.Second,
+			10 * time.Minute,
+		}),
+	)
+	assert.Nil(err)
+	defer c.Close(context.Background())
+
+	key := "key"
+	value := []byte("value")
+	err = c.SetBytes(context.Background(), key, value)
+	assert.Nil(err)
+	result, ttl, err := c.GetBytesAndTTL(context.Background(), key)
+	assert.Nil(err)
+	assert.Equal(value, result)
+	assert.NotEmpty(ttl)
+	time.Sleep(2 * time.Second)
+	_, ttl, err = c.GetBytesAndTTL(context.Background(), key)
+	assert.Nil(err)
+	assert.Equal(value, result)
+	assert.NotEmpty(ttl)
+}
+
+func TestGetAndTTL(t *testing.T) {
+	assert := assert.New(t)
+	c, err := New(time.Minute)
+	assert.Nil(err)
+
+	key := "key"
+	data := map[string]string{
+		"a": "1",
+	}
+	err = c.Set(context.Background(), key, data)
+	assert.Nil(err)
+	result := map[string]string{}
+	ttl, err := c.GetAndTTL(context.Background(), key, &result)
+	assert.Nil(err)
+	assert.NotEmpty(ttl)
+	assert.Equal(data, result)
 }
 
 func BenchmarkBigcache(b *testing.B) {

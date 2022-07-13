@@ -26,10 +26,16 @@ type bigCacheStore struct {
 }
 
 func (bcs *bigCacheStore) Set(_ context.Context, key string, value []byte, _ time.Duration) error {
+	if key == "" {
+		return ErrKeyIsNil
+	}
 	return bcs.client.Set(key, value)
 }
 
 func (bcs *bigCacheStore) Get(_ context.Context, key string) ([]byte, error) {
+	if key == "" {
+		return nil, ErrKeyIsNil
+	}
 	buf, err := bcs.client.Get(key)
 	if err == bigcache.ErrEntryNotFound {
 		err = ErrIsNil
