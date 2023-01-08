@@ -74,7 +74,7 @@ func newBigCacheStore(ttl time.Duration, opt *Option) (Store, error) {
 	if opt.shards > 0 {
 		conf.Shards = opt.shards
 	}
-	c, err := bigcache.NewBigCache(conf)
+	c, err := bigcache.New(context.Background(), conf)
 	if err != nil {
 		return nil, err
 	}
