@@ -14,6 +14,7 @@ jobs:
     strategy:
       matrix:
         go:
+        - '1.19'
         - '1.18'
     # Service containers to run with `container-job`
     services:
