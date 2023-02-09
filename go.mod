@@ -4,9 +4,9 @@ go 1.18
 
 require (
 	github.com/allegro/bigcache/v3 v3.1.0
-	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang/snappy v0.0.4
-	github.com/klauspost/compress v1.15.14
+	github.com/klauspost/compress v1.15.15
+	github.com/redis/go-redis/v9 v9.0.2
 	github.com/stretchr/testify v1.8.1
 )
 
