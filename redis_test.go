@@ -15,8 +15,7 @@
 package cache
 
 import (
-	"math/rand"
-	"time"
+	"crypto/rand"
 
 	redis "github.com/redis/go-redis/v9"
 )
@@ -32,20 +31,8 @@ const (
 // randomString 生成随机的字符串
 func randomString() string {
 	n := 10
-	rand.Seed(time.Now().UnixNano())
 	b := make([]byte, n)
-	// A rand.Int63() generates 63 random bits, enough for letterIdxMax letters!
-	for i, cache, remain := n-1, rand.Int63(), letterIdxMax; i >= 0; {
-		if remain == 0 {
-			cache, remain = rand.Int63(), letterIdxMax
-		}
-		if idx := int(cache & letterIdxMask); idx < len(letterBytes) {
-			b[i] = letterBytes[idx]
-			i--
-		}
-		cache >>= letterIdxBits
-		remain--
-	}
+	_, _ = rand.Read(b)
 
 	return string(b)
 }
