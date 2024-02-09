@@ -1,12 +1,12 @@
 module github.com/vicanso/go-cache/v2
 
-go 1.18
+go 1.19
 
 require (
 	github.com/allegro/bigcache/v3 v3.1.0
 	github.com/golang/snappy v0.0.4
-	github.com/klauspost/compress v1.17.4
-	github.com/redis/go-redis/v9 v9.3.1
+	github.com/klauspost/compress v1.17.6
+	github.com/redis/go-redis/v9 v9.4.0
 	github.com/stretchr/testify v1.8.4
 )
 
