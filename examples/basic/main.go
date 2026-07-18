@@ -19,7 +19,7 @@ func main() {
 	if err != nil {
 		fmt.Println(err)
 	}
-	defer c.Close(context.Background())
+	defer c.Close(context.Background()) //nolint:errcheck
 	key := "key"
 	data := Data{
 		Name: "tree.xie",

@@ -25,8 +25,8 @@ import (
 
 func TestRedisLock(t *testing.T) {
 	assert := assert.New(t)
-	c := newClient()
-	defer c.Close()
+	c, mr := newClient(t)
+	defer c.Close() //nolint:errcheck
 	opts := []RedisCacheOption{
 		RedisCachePrefixOption("prefix:"),
 		RedisCacheTTLOption(5 * time.Millisecond),
@@ -44,8 +44,8 @@ func TestRedisLock(t *testing.T) {
 	assert.Nil(err)
 	assert.False(ok)
 
-	// 第三次等待过期后成功
-	time.Sleep(10 * time.Millisecond)
+	// 第三次等待过期后成功(miniredis不随真实时间过期，需手动推进)
+	mr.FastForward(10 * time.Millisecond)
 	ok, err = srv.Lock(context.TODO(), key)
 	assert.Nil(err)
 	assert.True(ok)
@@ -53,8 +53,8 @@ func TestRedisLock(t *testing.T) {
 
 func TestRedisLockWithDone(t *testing.T) {
 	assert := assert.New(t)
-	c := newClient()
-	defer c.Close()
+	c, _ := newClient(t)
+	defer c.Close() //nolint:errcheck
 	srv := NewRedisCache(c)
 	key := randomString()
 	ttl := 2 * time.Second
@@ -79,8 +79,8 @@ func TestRedisLockWithDone(t *testing.T) {
 
 func TestRedisIncWithTTL(t *testing.T) {
 	assert := assert.New(t)
-	c := newClient()
-	defer c.Close()
+	c, _ := newClient(t)
+	defer c.Close() //nolint:errcheck
 	srv := NewRedisCache(c)
 	key := randomString()
 
@@ -103,8 +103,8 @@ func TestRedisIncWithTTL(t *testing.T) {
 
 func TestRedisGetSet(t *testing.T) {
 	assert := assert.New(t)
-	c := newClient()
-	defer c.Close()
+	c, _ := newClient(t)
+	defer c.Close() //nolint:errcheck
 	srv := NewRedisCache(c)
 	key := randomString()
 
@@ -139,8 +139,8 @@ func TestRedisGetSet(t *testing.T) {
 
 func TestRedisGetSetStruct(t *testing.T) {
 	assert := assert.New(t)
-	c := newClient()
-	defer c.Close()
+	c, _ := newClient(t)
+	defer c.Close() //nolint:errcheck
 	srv := NewRedisCache(c)
 	key := randomString()
 
@@ -177,8 +177,8 @@ func TestRedisGetSetStructTTL(t *testing.T) {
 		"a": "1",
 	}
 
-	c := newClient()
-	defer c.Close()
+	c, _ := newClient(t)
+	defer c.Close() //nolint:errcheck
 	srv := NewRedisCache(c)
 	err := srv.SetStructWithTTL(context.Background(), "key", data, 10*time.Second)
 	assert.Nil(err)

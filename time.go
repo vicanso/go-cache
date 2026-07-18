@@ -27,8 +27,5 @@ func writeTimeToBytes(t time.Time, data []byte) {
 
 func getTimeFromBytes(buf []byte) time.Time {
 	timestamp := int64(binary.BigEndian.Uint64(buf))
-	sec := timestamp / int64(time.Second)
-	nsec := timestamp % int64(time.Second)
-
-	return time.Unix(sec, nsec)
+	return time.Unix(0, timestamp)
 }

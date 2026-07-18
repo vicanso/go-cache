@@ -24,8 +24,8 @@ import (
 
 func TestRedisSession(t *testing.T) {
 	assert := assert.New(t)
-	c := newClient()
-	defer c.Close()
+	c, _ := newClient(t)
+	defer c.Close() //nolint:errcheck
 	rs := NewRedisSession(c)
 	key := randomString()
 	rs.SetPrefix("ss:")

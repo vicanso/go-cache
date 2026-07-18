@@ -58,7 +58,7 @@ func TestCacheGetSet(t *testing.T) {
 
 	c, err := New(1 * time.Second)
 	assert.Nil(err)
-	defer c.Close(context.Background())
+	defer c.Close(context.Background()) //nolint:errcheck
 
 	key := "key"
 	err = c.Set(context.Background(), key, &testData{
@@ -104,7 +104,7 @@ func TestCacheCompress(t *testing.T) {
 		CacheSnappyOption(1),
 	)
 	assert.Nil(err)
-	defer c.Close(context.Background())
+	defer c.Close(context.Background()) //nolint:errcheck
 
 	key := "key"
 	value := []byte("Hello World!Hello World!Hello World!")
@@ -147,7 +147,7 @@ func TestCacheMultiStore(t *testing.T) {
 		CacheSecondaryStoreOption(s2),
 	)
 	assert.Nil(err)
-	defer c.Close(context.Background())
+	defer c.Close(context.Background()) //nolint:errcheck
 
 	key := "key"
 	value := []byte("value")
@@ -193,7 +193,7 @@ func TestCacheMultiTTL(t *testing.T) {
 		}),
 	)
 	assert.Nil(err)
-	defer c.Close(context.Background())
+	defer c.Close(context.Background()) //nolint:errcheck
 
 	key := "key"
 	value := []byte("value")
@@ -226,6 +226,35 @@ func TestGetAndTTL(t *testing.T) {
 	assert.Nil(err)
 	assert.NotEmpty(ttl)
 	assert.Equal(data, result)
+}
+
+func TestCacheEmptyValue(t *testing.T) {
+	assert := assert.New(t)
+
+	// 无压缩：缓存空值应命中并返回空数据，而非ErrIsNil
+	c, err := New(time.Minute)
+	assert.Nil(err)
+	defer c.Close(context.Background()) //nolint:errcheck
+	key := "empty"
+	err = c.SetBytes(context.Background(), key, []byte{})
+	assert.Nil(err)
+	buf, err := c.GetBytes(context.Background(), key)
+	assert.Nil(err)
+	assert.Empty(buf)
+
+	// 未命中仍返回ErrIsNil
+	_, err = c.GetBytes(context.Background(), "missing")
+	assert.Equal(ErrIsNil, err)
+
+	// 有压缩：空值同样命中并正确解码
+	cc, err := New(time.Minute, CacheSnappyOption(1))
+	assert.Nil(err)
+	defer cc.Close(context.Background()) //nolint:errcheck
+	err = cc.SetBytes(context.Background(), key, []byte{})
+	assert.Nil(err)
+	buf, err = cc.GetBytes(context.Background(), key)
+	assert.Nil(err)
+	assert.Empty(buf)
 }
 
 func BenchmarkBigcache(b *testing.B) {

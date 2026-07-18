@@ -51,23 +51,6 @@ func snappyDecode(data []byte) ([]byte, error) {
 	return snappy.Decode(dst, data)
 }
 
-func zstdEncode(data []byte, level int) ([]byte, error) {
-	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevel(level)))
-	if err != nil {
-		return nil, err
-	}
-	data = encoder.EncodeAll(data, make([]byte, 0, len(data)))
-	return data, nil
-}
-
-func zstdDecode(data []byte) ([]byte, error) {
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, err
-	}
-	return decoder.DecodeAll(data, nil)
-}
-
 type compressor struct {
 	minCompressLength int
 	encode            func(data []byte) ([]byte, error)
@@ -75,22 +58,32 @@ type compressor struct {
 }
 
 func (c *compressor) Encode(data []byte) ([]byte, error) {
-	size := len(data)
-	// 不做压缩
+	return c.encodeWithPrefix(0, data)
+}
+
+// prefixEncoder 是可选的内部优化接口。实现者将编码结果写入一个
+// 头部预留了prefixLen字节空位的buffer，使调用方(Cache)可将时间戳
+// 前缀与压缩头合并为一次内存分配，省去一次整段拷贝。
+type prefixEncoder interface {
+	encodeWithPrefix(prefixLen int, data []byte) ([]byte, error)
+}
+
+// encodeWithPrefix 在结果头部预留prefixLen字节空位，其后为1字节
+// 压缩标志与(可选压缩的)数据。
+func (c *compressor) encodeWithPrefix(prefixLen int, data []byte) ([]byte, error) {
 	compressType := CompressNone
-	if c.Match(size) {
-		compressType = Compressed
+	if c.Match(len(data)) {
 		buf, err := c.encode(data)
 		if err != nil {
 			return nil, err
 		}
 		data = buf
-		size = len(data)
+		compressType = Compressed
 	}
-	newData := make([]byte, size+1)
-	newData[0] = compressType
-	copy(newData[1:], data)
-	return newData, nil
+	out := make([]byte, prefixLen+1+len(data))
+	out[prefixLen] = compressType
+	copy(out[prefixLen+1:], data)
+	return out, nil
 }
 
 func (c *compressor) Decode(data []byte) ([]byte, error) {
@@ -122,14 +115,27 @@ func NewCompressor(opt CompressorOption) Compressor {
 	}
 }
 
-// NewZSTDCompressor creates a zstd compressor
+// NewZSTDCompressor creates a zstd compressor. The underlying encoder and
+// decoder are created once and reused across calls (EncodeAll and DecodeAll
+// are safe for concurrent use), which avoids the goroutine leak and repeated
+// allocation of creating a new writer/reader on every Encode/Decode.
 func NewZSTDCompressor(minCompressLength, level int) Compressor {
+	encoder, encErr := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevel(level)))
+	decoder, decErr := zstd.NewReader(nil)
 	return NewCompressor(CompressorOption{
 		MinCompressLength: minCompressLength,
 		Encode: func(data []byte) ([]byte, error) {
-			return zstdEncode(data, level)
+			if encErr != nil {
+				return nil, encErr
+			}
+			return encoder.EncodeAll(data, make([]byte, 0, len(data))), nil
 		},
-		Decode: zstdDecode,
+		Decode: func(data []byte) ([]byte, error) {
+			if decErr != nil {
+				return nil, decErr
+			}
+			return decoder.DecodeAll(data, nil)
+		},
 	})
 }
 

@@ -199,12 +199,12 @@ func (c *RedisCache) GetAndDel(ctx context.Context, key string) ([]byte, error) 
 	return cmd.Bytes()
 }
 
-func (c *RedisCache) setBytes(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+func (c *RedisCache) set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	return c.client.Set(ctx, key, value, ttl).Err()
 }
 
-func (c *RedisCache) set(ctx context.Context, key string, value any, ttl time.Duration) error {
-	return c.client.Set(ctx, key, value, ttl).Err()
+func (c *RedisCache) setBytes(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	return c.set(ctx, key, value, ttl)
 }
 
 // Set sets data to cache, if ttl is not nil, it will use default ttl
@@ -244,6 +244,11 @@ func (c *RedisCache) GetStructAndTTL(ctx context.Context, key string, value any)
 	buf, err := c.getBytes(ctx, key)
 	if err != nil {
 		return 0, err
+	}
+	// 数据应由SetStructWithTTL写入，前缀为8字节过期时间戳，
+	// 长度不足说明格式不符，直接返回避免切片越界
+	if len(buf) < timestampByteSize {
+		return 0, ErrIsNil
 	}
 	err = unmarshal(buf[timestampByteSize:], value)
 	if err != nil {

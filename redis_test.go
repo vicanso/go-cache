@@ -16,7 +16,9 @@ package cache
 
 import (
 	"crypto/rand"
+	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	redis "github.com/redis/go-redis/v9"
 )
 
@@ -29,9 +31,17 @@ func randomString() string {
 	return string(b)
 }
 
-func newClient() *redis.Client {
-	c := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	return c
+// newClient 启动一个内存版miniredis并返回连接它的client，
+// 测试结束时自动关闭。返回的miniredis实例可用于FastForward等
+// 需要手动推进时间的场景(miniredis不会随真实时间自动过期key)。
+func newClient(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
+	t.Helper()
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(mr.Close)
+	return redis.NewClient(&redis.Options{
+		Addr: mr.Addr(),
+	}), mr
 }

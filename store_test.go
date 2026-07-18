@@ -42,7 +42,8 @@ func TestStore(t *testing.T) {
 		},
 		{
 			newStore: func() (Store, error) {
-				return NewRedisStore(newClient()), nil
+				c, _ := newClient(t)
+				return NewRedisStore(c), nil
 			},
 		},
 	}
@@ -50,7 +51,7 @@ func TestStore(t *testing.T) {
 	for _, tt := range tests {
 		store, err := tt.newStore()
 		assert.Nil(err)
-		defer store.Close(context.Background())
+		defer store.Close(context.Background()) //nolint:errcheck
 
 		key := randomString()
 		value := []byte("value")

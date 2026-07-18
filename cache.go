@@ -34,8 +34,8 @@ type Cache struct {
 	compressor Compressor
 }
 
-var ErrIsNil = errors.New("Data is nil")
-var ErrKeyIsNil = errors.New("Key is nil")
+var ErrIsNil = errors.New("data is nil")
+var ErrKeyIsNil = errors.New("key is nil")
 
 // New creates a new cache with default ttl
 func New(ttl time.Duration, opts ...CacheOption) (*Cache, error) {
@@ -113,6 +113,7 @@ func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, time.Duration
 	var expiredAt time.Time
 	now := time.Now()
 	var ttl time.Duration
+	found := false
 	for index, s := range c.stores {
 		buf, err := s.Get(ctx, key)
 		// 出错，而且是最后一个store
@@ -132,23 +133,25 @@ func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, time.Duration
 			// 一般情况下index为0，由于bigcache可能因为空间不足导致数据清除
 			// 或者二级缓存是redis，其它实例有操作更新
 			if index != 0 {
-				// 如果当前缓存对应的ttl
-				// 少于第一个缓存的ttl(内存缓存有效期有可能较短），则
-				// 使用新的ttl来修改记录
+				// 如果第一个缓存(内存缓存)配置的ttl
+				// 少于当前数据的剩余ttl(内存缓存有效期有可能较短)，
+				// 则使用较短的ttl回填，并同步更新buf中的过期时间戳
 				firstIndex := 0
-				newTTL := c.getTTL(firstIndex, ttl)
+				newTTL := c.getTTL(firstIndex)
 				if newTTL < ttl {
 					ttl = newTTL
-					writeTimeToBytes(time.Now().Add(ttl), data)
+					writeTimeToBytes(time.Now().Add(ttl), buf)
 				}
 				// 设置失败则忽略
 				_ = c.stores[firstIndex].Set(ctx, key, buf, ttl)
 			}
 			data = buf[timestampByteSize:]
+			found = true
 			break
 		}
 	}
-	if len(data) == 0 {
+	// 未命中(区别于命中但值为空)
+	if !found {
 		return nil, 0, ErrIsNil
 	}
 
@@ -179,17 +182,26 @@ func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttls ...
 	if err != nil {
 		return err
 	}
-	// 如果有设置解压
-	if c.compressor != nil {
+	// 构造 [时间戳前缀][(可选)压缩数据]。若compressor支持预留前缀
+	// (内置实现)，则时间戳前缀与压缩头合并为一次内存分配；
+	// 否则回退为先压缩再拼接前缀。
+	var data []byte
+	if c.compressor == nil {
+		data = make([]byte, len(value)+timestampByteSize)
+		copy(data[timestampByteSize:], value)
+	} else if pe, ok := c.compressor.(prefixEncoder); ok {
+		data, err = pe.encodeWithPrefix(timestampByteSize, value)
+		if err != nil {
+			return err
+		}
+	} else {
 		buf, err := c.compressor.Encode(value)
 		if err != nil {
 			return err
 		}
-		value = buf
+		data = make([]byte, len(buf)+timestampByteSize)
+		copy(data[timestampByteSize:], buf)
 	}
-	// 增加ttl至value中
-	data := make([]byte, len(value)+timestampByteSize)
-	copy(data[timestampByteSize:], value)
 	for index, s := range c.stores {
 		ttl := c.getTTL(index, ttls...)
 		writeTimeToBytes(time.Now().Add(ttl), data)
