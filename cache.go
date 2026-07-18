@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -27,26 +29,47 @@ const (
 	Compressed
 )
 
+// Cache is a multi-level cache. Writes fan out to every configured store
+// (best-effort, not atomic across stores). Reads walk stores in order and
+// back-fill earlier tiers on a later hit.
 type Cache struct {
 	keyPrefix  string
 	ttlList    []time.Duration
 	stores     []Store
 	compressor Compressor
+	// sfg coalesces concurrent secondary loads + primary back-fills for the same key
+	sfg singleflight.Group
 }
 
+// ErrIsNil is returned when the key is missing or the entry is logically expired.
+// Prefer ErrNotFound at new call sites; both values are identical for errors.Is.
 var ErrIsNil = errors.New("data is nil")
+
+// ErrNotFound is an alias of ErrIsNil with clearer semantics for cache misses.
+var ErrNotFound = ErrIsNil
+
+// ErrKeyIsNil is returned when the cache key is empty.
 var ErrKeyIsNil = errors.New("key is nil")
 
-// New creates a new cache with default ttl
+// New creates a new cache with default ttl.
+// When CacheMultiTTLOption is set and the default bigcache store is used, the
+// primary TTL (ttlList[0]) is used for bigcache's hard lifetime so it stays
+// aligned with the soft per-key TTL embedded in values.
 func New(ttl time.Duration, opts ...CacheOption) (*Cache, error) {
 	opt := Option{}
 	for _, fn := range opts {
 		fn(&opt)
 	}
 	store := opt.store
+	// Prefer multi-TTL primary duration for the default in-memory store so
+	// hard eviction matches the soft TTL (avoids long-lived logical zombies).
+	storeTTL := ttl
+	if len(opt.ttlList) > 0 {
+		storeTTL = opt.ttlList[0]
+	}
 	// 如果未指定store，则使用big cache
 	if store == nil {
-		s, err := newBigCacheStore(ttl, &opt)
+		s, err := newBigCacheStore(storeTTL, &opt)
 		if err != nil {
 			return nil, err
 		}
@@ -74,11 +97,17 @@ func New(ttl time.Duration, opts ...CacheOption) (*Cache, error) {
 	}, nil
 }
 
-// Close closes all stores of cache
+// Close closes all stores of cache. If the compressor implements Closer
+// (e.g. zstd), it is closed as well.
 func (c *Cache) Close(ctx context.Context) error {
 	for _, s := range c.stores {
 		err := s.Close(ctx)
 		if err != nil {
+			return err
+		}
+	}
+	if closer, ok := c.compressor.(Closer); ok {
+		if err := closer.Close(); err != nil {
 			return err
 		}
 	}
@@ -102,60 +131,51 @@ func (c *Cache) getTTL(index int, ttl ...time.Duration) time.Duration {
 	return c.ttlList[0]
 }
 
-func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, time.Duration, error) {
-	key, err := c.getKey(key)
+// cachePayload is the in-flight result of a store read (value without timestamp).
+type cachePayload struct {
+	data []byte
+	ttl  time.Duration
+}
+
+// readStore loads one store entry. On logical expiry it optionally deletes the
+// stale entry so subsequent reads skip the zombie. Non-miss errors are returned
+// as-is; misses (ErrIsNil/ErrNotFound or short payloads) yield found=false.
+func (c *Cache) readStore(ctx context.Context, index int, key string, deleteExpired bool) ([]byte, time.Duration, bool, error) {
+	buf, err := c.stores[index].Get(ctx, key)
 	if err != nil {
-		return nil, 0, err
-	}
-
-	max := len(c.stores)
-	var data []byte
-	var expiredAt time.Time
-	now := time.Now()
-	var ttl time.Duration
-	found := false
-	for index, s := range c.stores {
-		buf, err := s.Get(ctx, key)
-		// 出错，而且是最后一个store
-		// 则直接返回
-		if err != nil && index == max-1 {
-			return nil, 0, err
+		if errors.Is(err, ErrNotFound) {
+			return nil, 0, false, nil
 		}
-		// 如果获取到数据
-		if len(buf) >= timestampByteSize {
-			expiredAt = getTimeFromBytes(buf)
-			// 如果已过期，继续查询
-			ttl = expiredAt.Sub(now)
-			if ttl < 0 {
-				continue
-			}
-			// 第一个store的数据已过期，将数据重新设置至store
-			// 一般情况下index为0，由于bigcache可能因为空间不足导致数据清除
-			// 或者二级缓存是redis，其它实例有操作更新
-			if index != 0 {
-				// 如果第一个缓存(内存缓存)配置的ttl
-				// 少于当前数据的剩余ttl(内存缓存有效期有可能较短)，
-				// 则使用较短的ttl回填，并同步更新buf中的过期时间戳
-				firstIndex := 0
-				newTTL := c.getTTL(firstIndex)
-				if newTTL < ttl {
-					ttl = newTTL
-					writeTimeToBytes(time.Now().Add(ttl), buf)
-				}
-				// 设置失败则忽略
-				_ = c.stores[firstIndex].Set(ctx, key, buf, ttl)
-			}
-			data = buf[timestampByteSize:]
-			found = true
-			break
+		return nil, 0, false, err
+	}
+	if len(buf) < timestampByteSize {
+		return nil, 0, false, nil
+	}
+	expiredAt := getTimeFromBytes(buf)
+	ttl := time.Until(expiredAt)
+	if ttl < 0 {
+		if deleteExpired {
+			_ = c.stores[index].Delete(ctx, key)
 		}
+		return nil, 0, false, nil
 	}
-	// 未命中(区别于命中但值为空)
-	if !found {
-		return nil, 0, ErrIsNil
-	}
+	return buf, ttl, true, nil
+}
 
-	// 如果有配置压缩
+// backfillPrimary writes a secondary hit into the primary store, capping TTL
+// to the primary configuration when needed. The buffer is always cloned so
+// stores never share backing arrays.
+func (c *Cache) backfillPrimary(ctx context.Context, key string, buf []byte, ttl time.Duration) {
+	entry := append([]byte(nil), buf...)
+	primaryTTL := c.getTTL(0)
+	if primaryTTL < ttl {
+		ttl = primaryTTL
+		writeTimeToBytes(time.Now().Add(ttl), entry)
+	}
+	_ = c.stores[0].Set(ctx, key, entry, ttl)
+}
+
+func (c *Cache) decodePayload(data []byte, ttl time.Duration) ([]byte, time.Duration, error) {
 	if c.compressor != nil {
 		buf, err := c.compressor.Decode(data)
 		if err != nil {
@@ -164,6 +184,63 @@ func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, time.Duration
 		data = buf
 	}
 	return data, ttl, nil
+}
+
+func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, time.Duration, error) {
+	key, err := c.getKey(key)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Fast path: primary store only
+	buf, ttl, found, err := c.readStore(ctx, 0, key, true)
+	if err != nil {
+		// Primary hard error with no secondary: surface it
+		if len(c.stores) == 1 {
+			return nil, 0, err
+		}
+		// Otherwise fall through to secondary (resilient multi-level read)
+	} else if found {
+		return c.decodePayload(buf[timestampByteSize:], ttl)
+	}
+
+	if len(c.stores) <= 1 {
+		return nil, 0, ErrNotFound
+	}
+
+	// Coalesce concurrent secondary loads + back-fills for this key
+	v, err, _ := c.sfg.Do(key, func() (any, error) {
+		// Another goroutine may have already back-filled primary
+		buf, ttl, found, err := c.readStore(ctx, 0, key, true)
+		if err == nil && found {
+			return &cachePayload{data: buf[timestampByteSize:], ttl: ttl}, nil
+		}
+
+		max := len(c.stores)
+		for index := 1; index < max; index++ {
+			buf, ttl, found, err := c.readStore(ctx, index, key, true)
+			if err != nil {
+				if index == max-1 {
+					if errors.Is(err, ErrNotFound) {
+						return nil, ErrNotFound
+					}
+					return nil, err
+				}
+				continue
+			}
+			if !found {
+				continue
+			}
+			c.backfillPrimary(ctx, key, buf, ttl)
+			return &cachePayload{data: buf[timestampByteSize:], ttl: ttl}, nil
+		}
+		return nil, ErrNotFound
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	p := v.(*cachePayload)
+	return c.decodePayload(p.data, p.ttl)
 }
 
 // GetBytes gets the data from cache
@@ -202,10 +279,13 @@ func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttls ...
 		data = make([]byte, len(buf)+timestampByteSize)
 		copy(data[timestampByteSize:], buf)
 	}
+	// Best-effort multi-write: each store gets its own clone and TTL/timestamp.
+	// Failure on a later store does not roll back earlier stores.
 	for index, s := range c.stores {
 		ttl := c.getTTL(index, ttls...)
-		writeTimeToBytes(time.Now().Add(ttl), data)
-		err := s.Set(ctx, key, data, ttl)
+		entry := append([]byte(nil), data...)
+		writeTimeToBytes(time.Now().Add(ttl), entry)
+		err := s.Set(ctx, key, entry, ttl)
 		if err != nil {
 			return err
 		}
@@ -213,12 +293,15 @@ func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttls ...
 	return nil
 }
 
-// SetBytes sets the data to cache
+// SetBytes sets the data to cache. When multiple stores are configured, the
+// write is best-effort across stores (not atomic); a failure may leave earlier
+// stores updated.
 func (c *Cache) SetBytes(ctx context.Context, key string, value []byte, ttl ...time.Duration) error {
 	return c.setBytes(ctx, key, value, ttl...)
 }
 
-// Set marshals the value to bytes and sets to cache
+// Set marshals the value to bytes and sets to cache. Multi-store writes are
+// best-effort (see SetBytes).
 func (c *Cache) Set(ctx context.Context, key string, value any, ttl ...time.Duration) error {
 	entry, err := marshal(value)
 	if err != nil {

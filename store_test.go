@@ -16,6 +16,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -56,7 +57,7 @@ func TestStore(t *testing.T) {
 		key := randomString()
 		value := []byte("value")
 		_, err = store.Get(context.Background(), key)
-		assert.Equal(ErrIsNil, err)
+		assert.True(errors.Is(err, ErrNotFound))
 
 		err = store.Set(context.Background(), key, value, time.Second)
 		assert.Nil(err)
@@ -69,6 +70,23 @@ func TestStore(t *testing.T) {
 		assert.Nil(err)
 
 		_, err = store.Get(context.Background(), key)
-		assert.Equal(ErrIsNil, err)
+		assert.True(errors.Is(err, ErrNotFound))
 	}
+}
+
+func TestRedisStoreCloseOwnership(t *testing.T) {
+	assert := assert.New(t)
+	c, _ := newClient(t)
+
+	// Default store must not close the shared client
+	store := NewRedisStore(c)
+	assert.Nil(store.Close(context.Background()))
+	assert.Nil(c.Ping(context.Background()).Err())
+
+	// Owned store closes the client
+	c2, _ := newClient(t)
+	owned := NewRedisStoreOwned(c2)
+	assert.Nil(owned.Close(context.Background()))
+	err := c2.Ping(context.Background()).Err()
+	assert.NotNil(err)
 }

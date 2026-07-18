@@ -16,10 +16,10 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -35,18 +35,55 @@ func TestRedisLock(t *testing.T) {
 	key := randomString()
 
 	// 首次成功
-	ok, err := srv.Lock(context.TODO(), key)
+	ok, token, err := srv.Lock(context.TODO(), key)
 	assert.Nil(err)
 	assert.True(ok)
+	assert.NotEmpty(token)
 
 	// 第二次失败
-	ok, err = srv.Lock(context.TODO(), key)
+	ok, token2, err := srv.Lock(context.TODO(), key)
 	assert.Nil(err)
 	assert.False(ok)
+	assert.Empty(token2)
 
 	// 第三次等待过期后成功(miniredis不随真实时间过期，需手动推进)
 	mr.FastForward(10 * time.Millisecond)
-	ok, err = srv.Lock(context.TODO(), key)
+	ok, token3, err := srv.Lock(context.TODO(), key)
+	assert.Nil(err)
+	assert.True(ok)
+	assert.NotEmpty(token3)
+	assert.NotEqual(token, token3)
+}
+
+func TestRedisLockTokenSafety(t *testing.T) {
+	assert := assert.New(t)
+	c, mr := newClient(t)
+	defer c.Close() //nolint:errcheck
+	srv := NewRedisCache(c, RedisCacheTTLOption(5*time.Millisecond))
+	key := randomString()
+
+	ok, tokenA, err := srv.Lock(context.TODO(), key)
+	assert.Nil(err)
+	assert.True(ok)
+
+	// A 的锁过期后 B 拿到锁；A 再 Unlock 不应删掉 B 的锁
+	mr.FastForward(10 * time.Millisecond)
+	ok, tokenB, err := srv.Lock(context.TODO(), key)
+	assert.Nil(err)
+	assert.True(ok)
+	assert.NotEqual(tokenA, tokenB)
+
+	err = srv.Unlock(context.TODO(), key, tokenA)
+	assert.Nil(err)
+
+	// B 仍持有锁
+	ok, _, err = srv.Lock(context.TODO(), key)
+	assert.Nil(err)
+	assert.False(ok)
+
+	err = srv.Unlock(context.TODO(), key, tokenB)
+	assert.Nil(err)
+	ok, _, err = srv.Lock(context.TODO(), key)
 	assert.Nil(err)
 	assert.True(ok)
 }
@@ -108,11 +145,11 @@ func TestRedisGetSet(t *testing.T) {
 	srv := NewRedisCache(c)
 	key := randomString()
 
-	// 获取不存在时，返回出错
+	// 获取不存在时，返回 ErrNotFound
 	_, err := srv.Get(context.TODO(), key)
-	assert.Equal(redis.Nil, err)
+	assert.True(errors.Is(err, ErrNotFound))
 
-	// 获取不存在时，忽略Nil Error
+	// 获取不存在时，忽略 not-found
 	result, err := srv.GetIgnoreNilErr(context.TODO(), key)
 	assert.Nil(err)
 	assert.Empty(result)
@@ -134,7 +171,7 @@ func TestRedisGetSet(t *testing.T) {
 
 	// 再次获取则不存在
 	_, err = srv.Get(context.TODO(), key)
-	assert.Equal(redis.Nil, err)
+	assert.True(errors.Is(err, ErrNotFound))
 }
 
 func TestRedisGetSetStruct(t *testing.T) {
@@ -167,7 +204,7 @@ func TestRedisGetSetStruct(t *testing.T) {
 
 	// 再次获取则不存在
 	_, err = srv.Get(context.TODO(), key)
-	assert.Equal(redis.Nil, err)
+	assert.True(errors.Is(err, ErrNotFound))
 }
 
 func TestRedisGetSetStructTTL(t *testing.T) {
@@ -194,4 +231,19 @@ func TestRedisGetSetStructTTL(t *testing.T) {
 	ttl, err = srv.TTL(context.Background(), "key")
 	assert.Nil(err)
 	assert.NotEmpty(ttl)
+}
+
+func TestRedisGetStructAndTTLShortPayload(t *testing.T) {
+	assert := assert.New(t)
+	c, _ := newClient(t)
+	defer c.Close() //nolint:errcheck
+	srv := NewRedisCache(c)
+	key := randomString()
+
+	// 写入不足 8 字节的裸数据，GetStructAndTTL 应安全返回 ErrNotFound
+	err := srv.Set(context.Background(), key, []byte("short"), time.Minute)
+	assert.Nil(err)
+	var value map[string]string
+	_, err = srv.GetStructAndTTL(context.Background(), key, &value)
+	assert.True(errors.Is(err, ErrNotFound))
 }

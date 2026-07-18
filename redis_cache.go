@@ -16,6 +16,8 @@ package cache
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -29,6 +31,15 @@ type RedisCache struct {
 }
 
 const defaultRedisTTL = 10 * time.Minute
+
+// unlockScript deletes the lock key only when the value matches the holder token.
+var unlockScript = redis.NewScript(`
+if redis.call("get", KEYS[1]) == ARGV[1] then
+	return redis.call("del", KEYS[1])
+else
+	return 0
+end
+`)
 
 // RedisCacheOption redis cache option
 type RedisCacheOption func(c *RedisCache)
@@ -84,18 +95,60 @@ func (c *RedisCache) getKey(key string) (string, error) {
 	return c.prefix + key, nil
 }
 
-func (c *RedisCache) lock(ctx context.Context, key string, ttl time.Duration) (bool, error) {
-	return c.client.SetNX(ctx, key, true, ttl).Result()
+func newLockToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
-// Lock the key for ttl, ii will return true, nil if success
-func (c *RedisCache) Lock(ctx context.Context, key string, ttl ...time.Duration) (bool, error) {
+func mapRedisNil(err error) error {
+	if err == redis.Nil {
+		return ErrNotFound
+	}
+	return err
+}
+
+func (c *RedisCache) lock(ctx context.Context, key string, ttl time.Duration) (bool, string, error) {
+	token, err := newLockToken()
+	if err != nil {
+		return false, "", err
+	}
+	ok, err := c.client.SetNX(ctx, key, token, ttl).Result()
+	if err != nil || !ok {
+		return ok, "", err
+	}
+	return true, token, nil
+}
+
+func (c *RedisCache) unlock(ctx context.Context, key, token string) error {
+	return unlockScript.Run(ctx, c.client, []string{key}, token).Err()
+}
+
+// Lock acquires a lock for key using a unique token. On success the token must
+// be passed to Unlock (or discarded if the lock is left to expire). The lock
+// value is never a bare boolean, so a later holder cannot be unlocked by an
+// expired previous holder.
+func (c *RedisCache) Lock(ctx context.Context, key string, ttl ...time.Duration) (bool, string, error) {
 	key, err := c.getKey(key)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	d := c.getTTL(ttl...)
 	return c.lock(ctx, key, d)
+}
+
+// Unlock releases the lock for key only if token matches the current holder.
+func (c *RedisCache) Unlock(ctx context.Context, key, token string) error {
+	key, err := c.getKey(key)
+	if err != nil {
+		return err
+	}
+	if token == "" {
+		return nil
+	}
+	return c.unlock(ctx, key, token)
 }
 
 func (c *RedisCache) del(ctx context.Context, key string) (int64, error) {
@@ -112,21 +165,21 @@ func (c *RedisCache) Del(ctx context.Context, key string) (int64, error) {
 	return c.del(ctx, key)
 }
 
-// LockWithDone locks the key for ttl and return done function to delete the lock
+// LockWithDone locks the key for ttl and return done function to delete the lock.
+// done only deletes when the original token still holds the lock.
 func (c *RedisCache) LockWithDone(ctx context.Context, key string, ttl ...time.Duration) (bool, Done, error) {
 	key, err := c.getKey(key)
 	if err != nil {
 		return false, noop, err
 	}
 	d := c.getTTL(ttl...)
-	success, err := c.lock(ctx, key, d)
+	success, token, err := c.lock(ctx, key, d)
 	// 如果lock失败，则返回no op 的done function
 	if err != nil || !success {
 		return false, noop, err
 	}
 	done := func() error {
-		_, err := c.del(ctx, key)
-		return err
+		return c.unlock(ctx, key, token)
 	}
 	return true, done, nil
 }
@@ -158,10 +211,11 @@ func (c *RedisCache) IncWith(ctx context.Context, key string, value int64, ttl .
 func (c *RedisCache) getBytes(ctx context.Context, key string) ([]byte, error) {
 	// 避免多次调用getKey，
 	// 由public的方法来处理getkey，因此不再需要调用getKey
-	return c.client.Get(ctx, key).Bytes()
+	buf, err := c.client.Get(ctx, key).Bytes()
+	return buf, mapRedisNil(err)
 }
 
-// Get gets value from cache
+// Get gets value from cache. A missing key returns ErrNotFound (not redis.Nil).
 func (c *RedisCache) Get(ctx context.Context, key string) ([]byte, error) {
 	key, err := c.getKey(key)
 	if err != nil {
@@ -170,14 +224,14 @@ func (c *RedisCache) Get(ctx context.Context, key string) ([]byte, error) {
 	return c.getBytes(ctx, key)
 }
 
-// GetIgnoreNilErr gets value from cache and ignore nil err
+// GetIgnoreNilErr gets value from cache and ignore not-found err
 func (c *RedisCache) GetIgnoreNilErr(ctx context.Context, key string) ([]byte, error) {
 	key, err := c.getKey(key)
 	if err != nil {
 		return nil, err
 	}
 	result, err := c.getBytes(ctx, key)
-	if err != nil && err != redis.Nil {
+	if err != nil && err != ErrNotFound {
 		return nil, err
 	}
 	return result, nil
@@ -194,7 +248,7 @@ func (c *RedisCache) GetAndDel(ctx context.Context, key string) ([]byte, error) 
 	pipe.Del(ctx, key)
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return nil, err
+		return nil, mapRedisNil(err)
 	}
 	return cmd.Bytes()
 }
@@ -248,7 +302,7 @@ func (c *RedisCache) GetStructAndTTL(ctx context.Context, key string, value any)
 	// 数据应由SetStructWithTTL写入，前缀为8字节过期时间戳，
 	// 长度不足说明格式不符，直接返回避免切片越界
 	if len(buf) < timestampByteSize {
-		return 0, ErrIsNil
+		return 0, ErrNotFound
 	}
 	err = unmarshal(buf[timestampByteSize:], value)
 	if err != nil {

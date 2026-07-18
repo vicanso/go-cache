@@ -31,6 +31,13 @@ type Compressor interface {
 	// Decode decodes the data
 	Decode(data []byte) ([]byte, error)
 }
+
+// Closer is optionally implemented by compressors that hold reusable resources
+// (e.g. zstd encoder/decoder). Cache.Close will call Close when available.
+type Closer interface {
+	Close() error
+}
+
 type CompressorOption struct {
 	// MinCompressLength min compress length
 	MinCompressLength int
@@ -41,13 +48,17 @@ type CompressorOption struct {
 }
 
 func snappyEncode(data []byte) ([]byte, error) {
-	dst := []byte{}
-	dst = snappy.Encode(dst, data)
-	return dst, nil
+	// Pre-size to MaxEncodedLen so Encode does not reallocate.
+	dst := make([]byte, snappy.MaxEncodedLen(len(data)))
+	return snappy.Encode(dst, data), nil
 }
 
 func snappyDecode(data []byte) ([]byte, error) {
-	var dst []byte
+	n, err := snappy.DecodedLen(data)
+	if err != nil {
+		return nil, err
+	}
+	dst := make([]byte, n)
 	return snappy.Decode(dst, data)
 }
 
@@ -55,6 +66,7 @@ type compressor struct {
 	minCompressLength int
 	encode            func(data []byte) ([]byte, error)
 	decode            func(data []byte) ([]byte, error)
+	close             func() error
 }
 
 func (c *compressor) Encode(data []byte) ([]byte, error) {
@@ -106,6 +118,13 @@ func (c *compressor) Match(size int) bool {
 	return size > c.minCompressLength
 }
 
+func (c *compressor) Close() error {
+	if c.close != nil {
+		return c.close()
+	}
+	return nil
+}
+
 // NewCompressor creates a new compressor
 func NewCompressor(opt CompressorOption) Compressor {
 	return &compressor{
@@ -119,31 +138,71 @@ func NewCompressor(opt CompressorOption) Compressor {
 // decoder are created once and reused across calls (EncodeAll and DecodeAll
 // are safe for concurrent use), which avoids the goroutine leak and repeated
 // allocation of creating a new writer/reader on every Encode/Decode.
+// Call Close (via Cache.Close when used as the cache compressor) to release them.
 func NewZSTDCompressor(minCompressLength, level int) Compressor {
 	encoder, encErr := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevel(level)))
 	decoder, decErr := zstd.NewReader(nil)
-	return NewCompressor(CompressorOption{
-		MinCompressLength: minCompressLength,
-		Encode: func(data []byte) ([]byte, error) {
+	return &compressor{
+		minCompressLength: minCompressLength,
+		encode: func(data []byte) ([]byte, error) {
 			if encErr != nil {
 				return nil, encErr
 			}
-			return encoder.EncodeAll(data, make([]byte, 0, len(data))), nil
+			dst := make([]byte, 0, len(data))
+			return encoder.EncodeAll(data, dst), nil
 		},
-		Decode: func(data []byte) ([]byte, error) {
+		decode: func(data []byte) ([]byte, error) {
 			if decErr != nil {
 				return nil, decErr
 			}
 			return decoder.DecodeAll(data, nil)
 		},
-	})
+		close: func() error {
+			if encoder != nil {
+				_ = encoder.Close()
+			}
+			if decoder != nil {
+				decoder.Close()
+			}
+			return nil
+		},
+	}
 }
 
-// NewSnappyCompressor creates a snappy compressor
+// NewSnappyCompressor creates a snappy compressor with a single-allocation
+// encodeWithPrefix path (timestamp prefix + compress flag + body).
 func NewSnappyCompressor(minCompressLength int) Compressor {
-	return NewCompressor(CompressorOption{
-		MinCompressLength: minCompressLength,
-		Encode:            snappyEncode,
-		Decode:            snappyDecode,
-	})
+	return &snappyCompressor{
+		compressor: compressor{
+			minCompressLength: minCompressLength,
+			encode:            snappyEncode,
+			decode:            snappyDecode,
+		},
+	}
+}
+
+// snappyCompressor enables writing snappy output directly into a buffer that
+// already reserves the caller's prefix and the 1-byte compress flag.
+type snappyCompressor struct {
+	compressor
+}
+
+// Encode routes through the snappy-optimized encodeWithPrefix (embedding would
+// otherwise call compressor.encodeWithPrefix and lose the single-alloc path).
+func (c *snappyCompressor) Encode(data []byte) ([]byte, error) {
+	return c.encodeWithPrefix(0, data)
+}
+
+func (c *snappyCompressor) encodeWithPrefix(prefixLen int, data []byte) ([]byte, error) {
+	if !c.Match(len(data)) {
+		out := make([]byte, prefixLen+1+len(data))
+		out[prefixLen] = CompressNone
+		copy(out[prefixLen+1:], data)
+		return out, nil
+	}
+	max := snappy.MaxEncodedLen(len(data))
+	out := make([]byte, prefixLen+1+max)
+	out[prefixLen] = Compressed
+	encoded := snappy.Encode(out[prefixLen+1:prefixLen+1+max], data)
+	return out[:prefixLen+1+len(encoded)], nil
 }

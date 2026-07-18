@@ -22,7 +22,8 @@ import (
 )
 
 type redisStore struct {
-	client redis.UniversalClient
+	client      redis.UniversalClient
+	closeClient bool
 }
 
 func (rs *redisStore) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
@@ -32,12 +33,17 @@ func (rs *redisStore) Set(ctx context.Context, key string, value []byte, ttl tim
 func (rs *redisStore) Get(ctx context.Context, key string) ([]byte, error) {
 	data, err := rs.client.Get(ctx, key).Bytes()
 	if err == redis.Nil {
-		err = ErrIsNil
+		err = ErrNotFound
 	}
 	return data, err
 }
 
+// Close closes the underlying client only when the store owns it
+// (created via NewRedisStoreOwned). NewRedisStore never closes a shared client.
 func (rs *redisStore) Close(_ context.Context) error {
+	if !rs.closeClient {
+		return nil
+	}
 	return rs.client.Close()
 }
 
@@ -45,8 +51,19 @@ func (rs *redisStore) Delete(ctx context.Context, key string) error {
 	return rs.client.Del(ctx, key).Err()
 }
 
+// NewRedisStore wraps a redis client as a Store. The client is not closed by
+// Store.Close — the caller retains ownership (typical when the client is shared).
 func NewRedisStore(client redis.UniversalClient) Store {
 	return &redisStore{
 		client: client,
+	}
+}
+
+// NewRedisStoreOwned wraps a redis client as a Store that closes the client
+// when Store.Close is called. Use only when the cache exclusively owns the client.
+func NewRedisStoreOwned(client redis.UniversalClient) Store {
+	return &redisStore{
+		client:      client,
+		closeClient: true,
 	}
 }

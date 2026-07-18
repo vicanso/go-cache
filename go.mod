@@ -9,6 +9,7 @@ require (
 	github.com/klauspost/compress v1.19.0
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/stretchr/testify v1.11.1
+	golang.org/x/sync v0.15.0
 )
 
 require (

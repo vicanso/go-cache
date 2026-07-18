@@ -16,6 +16,9 @@ package cache
 
 import (
 	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -242,9 +245,10 @@ func TestCacheEmptyValue(t *testing.T) {
 	assert.Nil(err)
 	assert.Empty(buf)
 
-	// 未命中仍返回ErrIsNil
+	// 未命中仍返回 ErrNotFound / ErrIsNil
 	_, err = c.GetBytes(context.Background(), "missing")
-	assert.Equal(ErrIsNil, err)
+	assert.True(errors.Is(err, ErrNotFound))
+	assert.True(errors.Is(err, ErrIsNil))
 
 	// 有压缩：空值同样命中并正确解码
 	cc, err := New(time.Minute, CacheSnappyOption(1))
@@ -257,9 +261,194 @@ func TestCacheEmptyValue(t *testing.T) {
 	assert.Empty(buf)
 }
 
+// holdingStore keeps the last Set value by reference (no copy) to verify
+// multi-store writers clone buffers before mutating timestamps.
+type holdingStore struct {
+	mu   sync.Mutex
+	data map[string][]byte
+}
+
+func newHoldingStore() *holdingStore {
+	return &holdingStore{data: make(map[string][]byte)}
+}
+
+func (s *holdingStore) Set(_ context.Context, key string, value []byte, _ time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data[key] = value // intentionally no copy
+	return nil
+}
+
+func (s *holdingStore) Get(_ context.Context, key string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.data[key]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return v, nil
+}
+
+func (s *holdingStore) Delete(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.data, key)
+	return nil
+}
+
+func (s *holdingStore) Close(context.Context) error { return nil }
+
+func (s *holdingStore) snapshot(key string) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v := s.data[key]
+	if v == nil {
+		return nil
+	}
+	return append([]byte(nil), v...)
+}
+
+func TestMultiStoreClonesOnWrite(t *testing.T) {
+	assert := assert.New(t)
+	s1 := newHoldingStore()
+	s2 := newHoldingStore()
+	c, err := New(
+		time.Minute,
+		CacheStoreOption(s1),
+		CacheSecondaryStoreOption(s2),
+		CacheMultiTTLOption([]time.Duration{time.Second, 10 * time.Minute}),
+	)
+	assert.Nil(err)
+
+	key := "k"
+	value := []byte("payload")
+	err = c.SetBytes(context.Background(), key, value)
+	assert.Nil(err)
+
+	b1 := s1.snapshot(key)
+	b2 := s2.snapshot(key)
+	assert.NotNil(b1)
+	assert.NotNil(b2)
+	// Payloads (after timestamp) must match
+	assert.Equal(value, b1[timestampByteSize:])
+	assert.Equal(value, b2[timestampByteSize:])
+	// Embedded expiries must differ under multi-TTL (different hard timestamps)
+	assert.NotEqual(b1[:timestampByteSize], b2[:timestampByteSize])
+}
+
+func TestPrimaryLogicalExpiryIsDeleted(t *testing.T) {
+	assert := assert.New(t)
+	s1 := newHoldingStore()
+	s2 := newHoldingStore()
+
+	// Seed secondary with a still-valid entry; primary with an already-expired one.
+	key := "exp"
+	payload := []byte("v")
+	expired := make([]byte, timestampByteSize+len(payload))
+	writeTimeToBytes(time.Now().Add(-time.Minute), expired)
+	copy(expired[timestampByteSize:], payload)
+	valid := make([]byte, timestampByteSize+len(payload))
+	writeTimeToBytes(time.Now().Add(time.Minute), valid)
+	copy(valid[timestampByteSize:], payload)
+	_ = s1.Set(context.Background(), key, expired, time.Minute)
+	_ = s2.Set(context.Background(), key, valid, time.Minute)
+
+	c, err := New(
+		time.Minute,
+		CacheStoreOption(s1),
+		CacheSecondaryStoreOption(s2),
+	)
+	assert.Nil(err)
+
+	buf, err := c.GetBytes(context.Background(), key)
+	assert.Nil(err)
+	assert.Equal(payload, buf)
+	// Primary expired entry should have been deleted then back-filled
+	_, err = s1.Get(context.Background(), key)
+	assert.Nil(err)
+}
+
+func TestSingleflightBackfill(t *testing.T) {
+	assert := assert.New(t)
+
+	var gets atomic.Int64
+	secondary := &countingStore{
+		Store: newHoldingStore(),
+		gets:  &gets,
+	}
+	primary := newHoldingStore()
+
+	key := "hot"
+	payload := []byte("value")
+	entry := make([]byte, timestampByteSize+len(payload))
+	writeTimeToBytes(time.Now().Add(time.Minute), entry)
+	copy(entry[timestampByteSize:], payload)
+	_ = secondary.Set(context.Background(), key, entry, time.Minute)
+
+	c, err := New(
+		time.Minute,
+		CacheStoreOption(primary),
+		CacheSecondaryStoreOption(secondary),
+	)
+	assert.Nil(err)
+
+	const n = 32
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for range n {
+		go func() {
+			defer wg.Done()
+			buf, err := c.GetBytes(context.Background(), key)
+			assert.Nil(err)
+			assert.Equal(payload, buf)
+		}()
+	}
+	wg.Wait()
+
+	// Secondary Get should be coalesced by singleflight (typically 1; allow a
+	// small bound in case of timing races across the outer fast-path miss).
+	assert.LessOrEqual(gets.Load(), int64(4))
+	assert.GreaterOrEqual(gets.Load(), int64(1))
+}
+
+type countingStore struct {
+	Store
+	gets *atomic.Int64
+}
+
+func (s *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
+	s.gets.Add(1)
+	return s.Store.Get(ctx, key)
+}
+
+func TestNewUsesPrimaryTTLForBigcache(t *testing.T) {
+	assert := assert.New(t)
+	// Multi-TTL primary is short; bigcache hard life should follow primary TTL
+	// (ttlList[0]), not the New(ttl) argument.
+	c, err := New(
+		10*time.Minute,
+		CacheMultiTTLOption([]time.Duration{
+			50 * time.Millisecond,
+			10 * time.Minute,
+		}),
+	)
+	assert.Nil(err)
+	defer c.Close(context.Background()) //nolint:errcheck
+
+	key := "k"
+	err = c.SetBytes(context.Background(), key, []byte("v"))
+	assert.Nil(err)
+
+	// After primary soft TTL, getBytes treats entry as expired and deletes it.
+	// Without a secondary store the read is a miss.
+	time.Sleep(80 * time.Millisecond)
+	_, err = c.GetBytes(context.Background(), key)
+	assert.True(errors.Is(err, ErrNotFound))
+}
+
 func BenchmarkBigcache(b *testing.B) {
 	c, _ := New(time.Minute, CacheHardMaxCacheSizeOption(1))
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		key := randomString()
 		err := c.SetBytes(context.Background(), key, []byte(key), time.Second)
 		if err != nil {

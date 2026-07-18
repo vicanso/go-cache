@@ -20,12 +20,14 @@ import (
 
 // Store interface for cache
 type Store interface {
-	// Set sets data to store, the value should be copy before save to store
+	// Set sets data to store. Callers (Cache) clone per store before Set, but
+	// implementations that retain the slice asynchronously should still copy.
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
-	// Get gets data from store
+	// Get gets data from store. A miss should return ErrNotFound (or ErrIsNil).
 	Get(ctx context.Context, key string) ([]byte, error)
-	// Delete deletes data form store
+	// Delete deletes data from store
 	Delete(ctx context.Context, key string) error
-	// Close closes the store
+	// Close closes the store. Must not close shared external clients unless
+	// the store was constructed to own them (see NewRedisStoreOwned).
 	Close(ctx context.Context) error
 }
