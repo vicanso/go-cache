@@ -12,7 +12,7 @@
 
 ## 多级写入语义
 
-`Cache.Set` / `SetBytes` 向所有 store **顺序、尽力写入**（best-effort），**不保证跨 store 原子性**。靠后的 store 失败时，靠前的 store 可能已更新；调用方如需强一致应自行补偿或只使用单 store。
+`Cache.Set` / `SetBytes` 向所有 store **顺序、尽力写入**（best-effort），**不保证跨 store 原子性**。某个 store 失败不会中断其余 store 的写入，也不会回滚，所有错误通过 `errors.Join` 合并返回；调用方如需强一致应自行补偿或只使用单 store。`Delete` 与 `Close` 同样是"全部执行 + 合并错误"，其中 `Delete` 会忽略 key 不存在导致的 `ErrNotFound`。
 
 读路径上，后级命中会回填前级；同一 key 的后级加载与回填通过 `singleflight` 合并，降低惊群。逻辑过期的一级条目会在读取时删除。
 
@@ -20,8 +20,24 @@
 
 默认提供了两种常用的支持 ttl 的 store：
 
-- `bigcache`: 基于 bigcache 的内存 store。实例级硬生命周期在使用默认 store 时取 **一级 TTL**（`CacheMultiTTLOption` 的 `ttlList[0]`，否则为 `New` 的 `ttl`），与写入时嵌入的软过期时间戳对齐。
+- `bigcache`: 基于 bigcache 的内存 store，由 `NewBigCacheStore(ttl, opts...)` 创建。实例级硬生命周期在使用默认 store 时取 **一级 TTL**（`CacheMultiTTLOption` 的 `ttlList[0]`，否则为 `New` 的 `ttl`），与写入时嵌入的软过期时间戳对齐。
 - `redis`: 基于 redis 的 store，支持按 key 设置不同 ttl。
+
+bigcache 专属参数（shards、内存上限等）属于 store 而非 cache，通过 `BigCacheXXXOption` 传给 `NewBigCacheStore`，再用 `CacheStoreOption` / `CacheSecondaryStoreOption` 装配：
+
+```go
+store, err := cache.NewBigCacheStore(
+    time.Minute,
+    // 数据清除时间窗口，默认为1秒
+    cache.BigCacheCleanWindowOption(5*time.Second),
+    // 最大的entry大小，用于缓存的初始大小，默认为500
+    cache.BigCacheMaxEntrySizeOption(1024),
+    // 最大使用的内存大小(MB)，默认为0不限制
+    cache.BigCacheHardMaxCacheSizeOption(10),
+    // 分片数，必须为2的幂，默认为8
+    cache.BigCacheShardsOption(16),
+)
+```
 
 ### Redis client 所有权
 
@@ -33,14 +49,10 @@
 ```go
 c, err := cache.New(
     10*time.Minute,
-    // 数据清除时间窗口(仅用于bigcache)，默认为1秒
-    cache.CacheCleanWindowOption(5*time.Second),
-    // 最大的entry大小，用于缓存的初始大小，默认为500(仅用于bigcache)
-    cache.CacheMaxEntrySizeOption(1024),
-    // 最大使用的内存大小(MB)，默认为0不限制(仅用于bigcache)
-    cache.CacheHardMaxCacheSizeOption(10),
     // 指定key的前缀
     cache.CacheKeyPrefixOption("prefix:"),
+    // 指定一级缓存，不指定时使用默认参数的 bigcache
+    cache.CacheStoreOption(store),
     // 指定二级缓存（共享 redis client 时请用 NewRedisStore，勿用 Owned）
     cache.CacheSecondaryStoreOption(cache.NewRedisStore(redisClient)),
     // 指定不同的缓存使用不同的ttl；默认 bigcache 硬生命周期使用一级 TTL
@@ -56,6 +68,12 @@ if err != nil {
 }
 defer c.Close(context.Background())
 ```
+
+## 压缩
+
+`CacheSnappyOption` / `CacheZSTDOption` 开启压缩，写入格式为 `[8字节过期时间][压缩标志][数据]`，压缩标志由 `Cache` 写入，`Compressor` 只负责压缩本身。
+
+`Compressor` 接口为 **append 语义**：`EncodeTo(dst, data)` / `DecodeTo(dst, data)` 必须把结果追加到 `dst` 尾部并返回扩展后的 slice（与内置 `append` 一致），`Cache` 借此把过期时间戳、压缩标志与压缩数据合并为一次内存分配。自定义压缩器若只有普通的 `func([]byte) ([]byte, error)`，可用 `NewCompressor(CompressorOption{...})` 适配，代价是每次写入多一次拷贝。
 
 ## RedisCache
 

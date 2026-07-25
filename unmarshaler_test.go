@@ -29,6 +29,11 @@ func TestUnmarshal(t *testing.T) {
 	assert.Nil(err)
 	assert.Equal([]byte("abc"), b.Bytes())
 
+	// 复用buffer时应覆盖而非追加
+	err = unmarshal([]byte("de"), b)
+	assert.Nil(err)
+	assert.Equal([]byte("de"), b.Bytes())
+
 	m := make(map[string]string)
 	err = unmarshal([]byte(`{"name":"abc"}`), &m)
 	assert.Nil(err)

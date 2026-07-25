@@ -15,6 +15,7 @@
 package cache
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -101,7 +102,7 @@ func TestCacheGetSet(t *testing.T) {
 func TestCacheCompress(t *testing.T) {
 	assert := assert.New(t)
 
-	store, err := newBigCacheStore(time.Minute, &Option{})
+	store, err := NewBigCacheStore(time.Minute)
 	assert.Nil(err)
 	c, err := New(
 		time.Minute,
@@ -141,9 +142,9 @@ func TestCacheGetTTL(t *testing.T) {
 func TestCacheMultiStore(t *testing.T) {
 	assert := assert.New(t)
 
-	s1, err := newBigCacheStore(time.Minute, &Option{})
+	s1, err := NewBigCacheStore(time.Minute)
 	assert.Nil(err)
-	s2, err := newBigCacheStore(time.Minute, &Option{})
+	s2, err := NewBigCacheStore(time.Minute)
 	assert.Nil(err)
 
 	c, err := New(
@@ -183,9 +184,9 @@ func TestCacheMultiStore(t *testing.T) {
 
 func TestCacheMultiTTL(t *testing.T) {
 	assert := assert.New(t)
-	s1, err := newBigCacheStore(time.Minute, &Option{})
+	s1, err := NewBigCacheStore(time.Minute)
 	assert.Nil(err)
-	s2, err := newBigCacheStore(time.Minute, &Option{})
+	s2, err := NewBigCacheStore(time.Minute)
 	assert.Nil(err)
 
 	c, err := New(
@@ -454,9 +455,9 @@ func TestNewUsesPrimaryTTLForBigcache(t *testing.T) {
 func TestCacheDeleteNotExists(t *testing.T) {
 	assert := assert.New(t)
 
-	s1, err := newBigCacheStore(time.Minute, &Option{})
+	s1, err := NewBigCacheStore(time.Minute)
 	assert.Nil(err)
-	s2, err := newBigCacheStore(time.Minute, &Option{})
+	s2, err := NewBigCacheStore(time.Minute)
 	assert.Nil(err)
 
 	c, err := New(
@@ -480,8 +481,170 @@ func TestCacheDeleteNotExists(t *testing.T) {
 	assert.True(errors.Is(s1.Delete(context.Background(), key), ErrNotFound))
 }
 
+// closeRecorder 记录Close调用次数并可指定返回的错误
+type closeRecorder struct {
+	Store
+	err    error
+	closed atomic.Int64
+}
+
+func (s *closeRecorder) Close(_ context.Context) error {
+	s.closed.Add(1)
+	return s.err
+}
+
+// closableCompressor 用于验证compressor也会被Close
+type closableCompressor struct {
+	Compressor
+	closed atomic.Int64
+}
+
+func (c *closableCompressor) Close() error {
+	c.closed.Add(1)
+	return nil
+}
+
+// setErrStore 让Set固定失败，用于验证多store写入不会中断
+type setErrStore struct {
+	Store
+	err error
+}
+
+func (s *setErrStore) Set(_ context.Context, _ string, _ []byte, _ time.Duration) error {
+	return s.err
+}
+
+// 某个store关闭失败不能导致其余store与compressor泄漏
+func TestCacheCloseAll(t *testing.T) {
+	assert := assert.New(t)
+
+	base1, err := NewBigCacheStore(time.Minute)
+	assert.Nil(err)
+	base2, err := NewBigCacheStore(time.Minute)
+	assert.Nil(err)
+
+	closeErr := errors.New("close fail")
+	s1 := &closeRecorder{Store: base1, err: closeErr}
+	s2 := &closeRecorder{Store: base2}
+	compressor := &closableCompressor{Compressor: NewSnappyCompressor(50)}
+
+	c, err := New(
+		time.Minute,
+		CacheStoreOption(s1),
+		CacheSecondaryStoreOption(s2),
+		CacheCompressorOption(compressor),
+	)
+	assert.Nil(err)
+
+	err = c.Close(context.Background())
+	assert.True(errors.Is(err, closeErr))
+	// 一级store失败后，二级store与compressor仍需被关闭
+	assert.Equal(int64(1), s1.closed.Load())
+	assert.Equal(int64(1), s2.closed.Load())
+	assert.Equal(int64(1), compressor.closed.Load())
+}
+
+// 一级store写入失败时，二级store仍应被写入，错误合并返回
+func TestCacheSetBytesContinuesOnError(t *testing.T) {
+	assert := assert.New(t)
+
+	setErr := errors.New("set fail")
+	s2, err := NewBigCacheStore(time.Minute)
+	assert.Nil(err)
+
+	c, err := New(
+		time.Minute,
+		CacheStoreOption(&setErrStore{err: setErr}),
+		CacheSecondaryStoreOption(s2),
+	)
+	assert.Nil(err)
+
+	key := randomString()
+	value := []byte("value")
+	err = c.SetBytes(context.Background(), key, value)
+	assert.True(errors.Is(err, setErr))
+
+	buf, err := s2.Get(context.Background(), key)
+	assert.Nil(err)
+	assert.Equal(value, buf[timestampByteSize:])
+}
+
+// 存储格式必须保持 [8字节过期时间][压缩标志][数据]，
+// 压缩标志仅在配置了compressor时存在(与旧版本二进制兼容)
+func TestCacheEntryLayout(t *testing.T) {
+	assert := assert.New(t)
+
+	value := []byte("Hello World!Hello World!Hello World!")
+	compressor := NewSnappyCompressor(len(value) - 1)
+	encoded, err := compressor.EncodeTo(nil, value)
+	assert.Nil(err)
+
+	tests := []struct {
+		name  string
+		opts  []CacheOption
+		value []byte
+		want  []byte
+	}{
+		{
+			name:  "无compressor时没有标志位",
+			value: value,
+			want:  value,
+		},
+		{
+			name:  "未达压缩阈值",
+			opts:  []CacheOption{CacheCompressorOption(compressor)},
+			value: value[:len(value)-1],
+			want:  append([]byte{CompressNone}, value[:len(value)-1]...),
+		},
+		{
+			name:  "已压缩",
+			opts:  []CacheOption{CacheCompressorOption(compressor)},
+			value: value,
+			want:  append([]byte{Compressed}, encoded...),
+		},
+	}
+
+	for _, tt := range tests {
+		store, err := NewBigCacheStore(time.Minute)
+		assert.Nil(err)
+		c, err := New(time.Minute, append(tt.opts, CacheStoreOption(store))...)
+		assert.Nil(err)
+
+		key := randomString()
+		assert.Nil(c.SetBytes(context.Background(), key, tt.value), tt.name)
+
+		buf, err := store.Get(context.Background(), key)
+		assert.Nil(err, tt.name)
+		assert.Equal(tt.want, buf[timestampByteSize:], tt.name)
+
+		// 读回来应还原为原始数据
+		result, err := c.GetBytes(context.Background(), key)
+		assert.Nil(err, tt.name)
+		assert.Equal(tt.value, result, tt.name)
+	}
+}
+
+// 复用同一个bytes.Buffer连续读取，结果不应被拼接
+func TestCacheGetReusedBuffer(t *testing.T) {
+	assert := assert.New(t)
+
+	c, err := New(time.Minute)
+	assert.Nil(err)
+	defer c.Close(context.Background()) //nolint:errcheck
+
+	assert.Nil(c.SetBytes(context.Background(), "k1", []byte("first")))
+	assert.Nil(c.SetBytes(context.Background(), "k2", []byte("second")))
+
+	buf := new(bytes.Buffer)
+	assert.Nil(c.Get(context.Background(), "k1", buf))
+	assert.Equal("first", buf.String())
+	assert.Nil(c.Get(context.Background(), "k2", buf))
+	assert.Equal("second", buf.String())
+}
+
 func BenchmarkBigcache(b *testing.B) {
-	c, _ := New(time.Minute, CacheHardMaxCacheSizeOption(1))
+	store, _ := NewBigCacheStore(time.Minute, BigCacheHardMaxCacheSizeOption(1))
+	c, _ := New(time.Minute, CacheStoreOption(store))
 	for range b.N {
 		key := randomString()
 		err := c.SetBytes(context.Background(), key, []byte(key), time.Second)

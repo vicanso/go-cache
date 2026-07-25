@@ -31,14 +31,16 @@ func TestStore(t *testing.T) {
 	}{
 		{
 			newStore: func() (Store, error) {
-				return newBigCacheStore(time.Minute, &Option{
-					cleanWindow:      10 * time.Second,
-					maxEntrySize:     1000,
-					hardMaxCacheSize: 10 * 1024 * 1024,
-					onRemove: func(key string) {
+				return NewBigCacheStore(
+					time.Minute,
+					BigCacheCleanWindowOption(10*time.Second),
+					BigCacheMaxEntrySizeOption(1000),
+					BigCacheHardMaxCacheSizeOption(10*1024*1024),
+					BigCacheShardsOption(4),
+					BigCacheOnRemoveOption(func(key string) {
 
-					},
-				})
+					}),
+				)
 			},
 		},
 		{

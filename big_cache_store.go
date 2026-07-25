@@ -59,7 +59,64 @@ func (bcs *bigCacheStore) Delete(_ context.Context, key string) error {
 	return err
 }
 
-func newBigCacheStore(ttl time.Duration, opt *Option) (Store, error) {
+type bigCacheOptions struct {
+	cleanWindow      time.Duration
+	maxEntrySize     int
+	hardMaxCacheSize int
+	shards           int
+	onRemove         func(key string)
+}
+
+// BigCacheOption configures the bigcache backed store
+type BigCacheOption func(opt *bigCacheOptions)
+
+// BigCacheCleanWindowOption sets the interval of removing expired entries,
+// it is ignored when not greater than one second
+func BigCacheCleanWindowOption(cleanWindow time.Duration) BigCacheOption {
+	return func(opt *bigCacheOptions) {
+		opt.cleanWindow = cleanWindow
+	}
+}
+
+// BigCacheMaxEntrySizeOption sets the max size in bytes of an entry,
+// it is only used to size the initial allocation
+func BigCacheMaxEntrySizeOption(maxEntrySize int) BigCacheOption {
+	return func(opt *bigCacheOptions) {
+		opt.maxEntrySize = maxEntrySize
+	}
+}
+
+// BigCacheHardMaxCacheSizeOption sets the max size in MB of the store
+func BigCacheHardMaxCacheSizeOption(hardMaxCacheSize int) BigCacheOption {
+	return func(opt *bigCacheOptions) {
+		opt.hardMaxCacheSize = hardMaxCacheSize
+	}
+}
+
+// BigCacheShardsOption sets the shard count of the store, it must be a power
+// of two. It defaults to 8, which suits the common case of many small stores.
+func BigCacheShardsOption(shards int) BigCacheOption {
+	return func(opt *bigCacheOptions) {
+		opt.shards = shards
+	}
+}
+
+// BigCacheOnRemoveOption sets the callback fired when an entry is removed
+func BigCacheOnRemoveOption(onRemove func(key string)) BigCacheOption {
+	return func(opt *bigCacheOptions) {
+		opt.onRemove = onRemove
+	}
+}
+
+// NewBigCacheStore creates an in-memory store backed by bigcache. ttl is
+// bigcache's instance-wide hard lifetime; per-key soft TTL is handled by Cache
+// through the expiry embedded in every value. It is the default primary store
+// of Cache and can also be passed to CacheSecondaryStoreOption.
+func NewBigCacheStore(ttl time.Duration, opts ...BigCacheOption) (Store, error) {
+	opt := bigCacheOptions{}
+	for _, fn := range opts {
+		fn(&opt)
+	}
 	conf := bigcache.DefaultConfig(ttl)
 	// 设置默认的shards
 	// 因为常用的场景为初始化多个store

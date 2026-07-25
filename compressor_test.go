@@ -23,8 +23,7 @@ import (
 func TestCompressor(t *testing.T) {
 	assert := assert.New(t)
 
-	shortString := `{"name":"test"}`
-	longString := `{"name":"Snappy Snappy Snappy Snappy Snappy 速度很快"}`
+	longString := []byte(`{"name":"Snappy Snappy Snappy Snappy Snappy 速度很快"}`)
 	tests := []struct {
 		Compressor   Compressor
 		Data         []byte
@@ -32,44 +31,36 @@ func TestCompressor(t *testing.T) {
 	}{
 		{
 			Compressor:   NewSnappyCompressor(50),
-			Data:         []byte(shortString),
-			CompressData: []byte("\x00{\"name\":\"test\"}"),
-		},
-		{
-			Compressor:   NewSnappyCompressor(50),
-			Data:         []byte(longString),
-			CompressData: []byte("\x01:<{\"name\":\"Snappy n\a\x004速度很快\"}"),
+			Data:         longString,
+			CompressData: []byte(":<{\"name\":\"Snappy n\a\x004速度很快\"}"),
 		},
 		{
 			Compressor:   NewZSTDCompressor(50, 1),
-			Data:         []byte(shortString),
-			CompressData: []byte("\x00{\"name\":\"test\"}"),
-		},
-		{
-			Compressor:   NewZSTDCompressor(50, 1),
-			Data:         []byte(longString),
-			CompressData: []byte("\x01(\xb5/\xfd\x04\x005\x01\x00\xe4\x01{\"name\":\"Snappy 速度很快\"}\x01T\x10\x03\x19\x14\x056\xcfS"),
+			Data:         longString,
+			CompressData: []byte("(\xb5/\xfd\x04\x005\x01\x00\xe4\x01{\"name\":\"Snappy 速度很快\"}\x01T\x10\x03\x19\x14\x056\xcfS"),
 		},
 	}
 
 	for _, tt := range tests {
+		assert.True(tt.Compressor.Match(len(tt.Data)))
+		assert.GreaterOrEqual(tt.Compressor.MaxEncodedLen(len(tt.Data)), len(tt.CompressData))
 
-		buf, err := tt.Compressor.Encode(tt.Data)
+		buf, err := tt.Compressor.EncodeTo(nil, tt.Data)
 		assert.Nil(err)
 		assert.Equal(tt.CompressData, buf)
-		result, err := tt.Compressor.Decode(buf)
+
+		result, err := tt.Compressor.DecodeTo(nil, buf)
 		assert.Nil(err)
 		assert.Equal(tt.Data, result)
 	}
 }
 
-// encodeWithPrefix 预留的前缀不能影响编码结果，且长度必须精确
-// (snappy走的是预分配容量+截断的路径，长度算错会带上垃圾数据)
-func TestCompressorEncodeWithPrefix(t *testing.T) {
+// EncodeTo/DecodeTo 必须是append语义：已有内容不能被覆盖，
+// 返回长度必须精确(snappy走的是预分配容量再截断的路径)
+func TestCompressorAppendSemantics(t *testing.T) {
 	assert := assert.New(t)
 
-	shortString := []byte(`{"name":"test"}`)
-	longString := []byte(`{"name":"Snappy Snappy Snappy Snappy Snappy 速度很快"}`)
+	data := []byte(`{"name":"Snappy Snappy Snappy Snappy Snappy 速度很快"}`)
 	compressors := []Compressor{
 		NewSnappyCompressor(50),
 		NewZSTDCompressor(50, 1),
@@ -79,23 +70,26 @@ func TestCompressorEncodeWithPrefix(t *testing.T) {
 			Decode:            func(data []byte) ([]byte, error) { return data, nil },
 		}),
 	}
-	const prefixLen = timestampByteSize
+	prefix := []byte("prefix")
 
 	for _, c := range compressors {
-		pe, ok := c.(prefixEncoder)
-		assert.True(ok)
-		for _, data := range [][]byte{shortString, longString} {
-			noPrefix, err := c.Encode(data)
-			assert.Nil(err)
+		plain, err := c.EncodeTo(nil, data)
+		assert.Nil(err)
 
-			buf, err := pe.encodeWithPrefix(prefixLen, data)
+		// 容量充足(调用方已按MaxEncodedLen预留)与容量不足两种情形都要正确
+		for _, dst := range [][]byte{
+			append(make([]byte, 0, len(prefix)+c.MaxEncodedLen(len(data))), prefix...),
+			append([]byte(nil), prefix...),
+		} {
+			buf, err := c.EncodeTo(dst, data)
 			assert.Nil(err)
-			// 前缀之后的内容应与不带前缀的编码结果完全一致
-			assert.Equal(noPrefix, buf[prefixLen:])
+			assert.Equal(prefix, buf[:len(prefix)])
+			assert.Equal(plain, buf[len(prefix):])
 
-			result, err := c.Decode(buf[prefixLen:])
+			result, err := c.DecodeTo(append([]byte(nil), prefix...), buf[len(prefix):])
 			assert.Nil(err)
-			assert.Equal(data, result)
+			assert.Equal(prefix, result[:len(prefix)])
+			assert.Equal(data, result[len(prefix):])
 		}
 	}
 }
@@ -107,17 +101,12 @@ func TestCompressorNilFunc(t *testing.T) {
 	c := NewCompressor(CompressorOption{
 		MinCompressLength: 1,
 	})
-	_, err := c.Encode([]byte("abcd"))
+	_, err := c.EncodeTo(nil, []byte("abcd"))
 	assert.Equal(errCompressorFuncNil, err)
 
-	_, err = c.Decode([]byte{Compressed, 'a'})
+	_, err = c.DecodeTo(nil, []byte("abcd"))
 	assert.Equal(errCompressorFuncNil, err)
 
-	// 未触发压缩时不需要Encode/Decode
-	buf, err := c.Encode(nil)
-	assert.Nil(err)
-	assert.Equal([]byte{CompressNone}, buf)
-	result, err := c.Decode(buf)
-	assert.Nil(err)
-	assert.Empty(result)
+	// 未提供maxEncodedLen时回退为原始长度
+	assert.Equal(4, c.MaxEncodedLen(4))
 }

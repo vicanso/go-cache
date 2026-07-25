@@ -69,7 +69,7 @@ func New(ttl time.Duration, opts ...CacheOption) (*Cache, error) {
 	}
 	// 如果未指定store，则使用big cache
 	if store == nil {
-		s, err := newBigCacheStore(storeTTL, &opt)
+		s, err := NewBigCacheStore(storeTTL)
 		if err != nil {
 			return nil, err
 		}
@@ -98,20 +98,22 @@ func New(ttl time.Duration, opts ...CacheOption) (*Cache, error) {
 }
 
 // Close closes all stores of cache. If the compressor implements Closer
-// (e.g. zstd), it is closed as well.
+// (e.g. zstd), it is closed as well. Every store and the compressor are always
+// closed even when one of them fails, so a single failure cannot leak the
+// others; all errors are joined into the returned error.
 func (c *Cache) Close(ctx context.Context) error {
+	var errs []error
 	for _, s := range c.stores {
-		err := s.Close(ctx)
-		if err != nil {
-			return err
+		if err := s.Close(ctx); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	if closer, ok := c.compressor.(Closer); ok {
 		if err := closer.Close(); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (c *Cache) getKey(key string) (string, error) {
@@ -175,15 +177,47 @@ func (c *Cache) backfillPrimary(ctx context.Context, key string, buf []byte, ttl
 	_ = c.stores[0].Set(ctx, key, entry, ttl)
 }
 
+// decodePayload strips the compress flag written by encodeValue and
+// decompresses the body when needed. Entries written without a compressor have
+// no flag byte, which is why the flag is only read when one is configured.
 func (c *Cache) decodePayload(data []byte, ttl time.Duration) ([]byte, time.Duration, error) {
-	if c.compressor != nil {
-		buf, err := c.compressor.Decode(data)
-		if err != nil {
-			return nil, 0, err
-		}
-		data = buf
+	if c.compressor == nil || len(data) == 0 {
+		return data, ttl, nil
 	}
-	return data, ttl, nil
+	if data[0] == CompressNone {
+		return data[1:], ttl, nil
+	}
+	buf, err := c.compressor.DecodeTo(nil, data[1:])
+	if err != nil {
+		return nil, 0, err
+	}
+	return buf, ttl, nil
+}
+
+// encodeValue builds a store entry in a single allocation: an 8 byte expiry
+// placeholder (filled in per store by setBytes) followed by the value. When a
+// compressor is configured a 1 byte compress flag sits between the two.
+func (c *Cache) encodeValue(value []byte) ([]byte, error) {
+	if c.compressor == nil {
+		data := make([]byte, timestampByteSize+len(value))
+		copy(data[timestampByteSize:], value)
+		return data, nil
+	}
+	const headerSize = timestampByteSize + 1
+	if !c.compressor.Match(len(value)) {
+		data := make([]byte, headerSize+len(value))
+		data[timestampByteSize] = CompressNone
+		copy(data[headerSize:], value)
+		return data, nil
+	}
+	// MaxEncodedLen仅用于预分配，实现返回异常值时回退为原始长度
+	size := c.compressor.MaxEncodedLen(len(value))
+	if size < 0 {
+		size = len(value)
+	}
+	data := make([]byte, headerSize, headerSize+size)
+	data[timestampByteSize] = Compressed
+	return c.compressor.EncodeTo(data, value)
 }
 
 func (c *Cache) getBytes(ctx context.Context, key string) ([]byte, time.Duration, error) {
@@ -259,32 +293,18 @@ func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttls ...
 	if err != nil {
 		return err
 	}
-	// 构造 [时间戳前缀][(可选)压缩数据]。若compressor支持预留前缀
-	// (内置实现)，则时间戳前缀与压缩头合并为一次内存分配；
-	// 否则回退为先压缩再拼接前缀。
-	var data []byte
-	if c.compressor == nil {
-		data = make([]byte, len(value)+timestampByteSize)
-		copy(data[timestampByteSize:], value)
-	} else if pe, ok := c.compressor.(prefixEncoder); ok {
-		data, err = pe.encodeWithPrefix(timestampByteSize, value)
-		if err != nil {
-			return err
-		}
-	} else {
-		buf, err := c.compressor.Encode(value)
-		if err != nil {
-			return err
-		}
-		data = make([]byte, len(buf)+timestampByteSize)
-		copy(data[timestampByteSize:], buf)
+	data, err := c.encodeValue(value)
+	if err != nil {
+		return err
 	}
 	// Best-effort multi-write: each store gets its own clone and TTL/timestamp.
-	// Failure on a later store does not roll back earlier stores.
+	// 每个store都会被尝试写入(失败不中断也不回滚)，所有错误合并返回，
+	// 避免出现"前面的store已写、后面的store未写"这种取决于遍历顺序的状态。
 	// data由本函数新分配且不再被复用，最后一个store可直接接管，
 	// 因此单store(常见场景)时无需任何克隆。
 	now := time.Now()
 	last := len(c.stores) - 1
+	var errs []error
 	for index, s := range c.stores {
 		ttl := c.getTTL(index, ttls...)
 		entry := data
@@ -292,17 +312,17 @@ func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttls ...
 			entry = append([]byte(nil), data...)
 		}
 		writeTimeToBytes(now.Add(ttl), entry)
-		err := s.Set(ctx, key, entry, ttl)
-		if err != nil {
-			return err
+		if err := s.Set(ctx, key, entry, ttl); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // SetBytes sets the data to cache. When multiple stores are configured, the
-// write is best-effort across stores (not atomic); a failure may leave earlier
-// stores updated.
+// write is best-effort across stores (not atomic): every store is attempted
+// even if an earlier one fails, so a failure may leave the stores inconsistent.
+// All store errors are joined into the returned error.
 func (c *Cache) SetBytes(ctx context.Context, key string, value []byte, ttl ...time.Duration) error {
 	return c.setBytes(ctx, key, value, ttl...)
 }
@@ -350,20 +370,20 @@ func (c *Cache) GetAndTTL(ctx context.Context, key string, value any) (time.Dura
 
 // Delete deletes the data from all stores. Deleting an absent key is a no-op:
 // ErrNotFound from a store is not reported (stores differ on whether they
-// signal a missing key). Every store is attempted even when one fails, and the
-// last non-nil error is returned.
+// signal a missing key). Every store is attempted even when one fails, and all
+// other errors are joined into the returned error.
 func (c *Cache) Delete(ctx context.Context, key string) error {
 	key, err := c.getKey(key)
 	if err != nil {
 		return err
 	}
-	var lastErr error
+	var errs []error
 	for _, s := range c.stores {
 		// 无论是否出错均继续删除其它store
 		e := s.Delete(ctx, key)
 		if e != nil && !errors.Is(e, ErrNotFound) {
-			lastErr = e
+			errs = append(errs, e)
 		}
 	}
-	return lastErr
+	return errors.Join(errs...)
 }

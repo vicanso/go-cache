@@ -26,8 +26,10 @@ type Unmarshaler interface {
 func unmarshal(data []byte, value any) error {
 	switch v := value.(type) {
 	case *bytes.Buffer:
-		v.Write(data)
-		return nil
+		// 先清空，否则复用同一个buffer连续读取会把多次结果拼接在一起
+		v.Reset()
+		_, err := v.Write(data)
+		return err
 	default:
 		fn := json.Unmarshal
 		unmarshaler, ok := value.(Unmarshaler)

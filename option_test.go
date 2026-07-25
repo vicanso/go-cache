@@ -23,14 +23,16 @@ import (
 
 func TestCacheOption(t *testing.T) {
 	assert := assert.New(t)
+	store, err := NewBigCacheStore(time.Minute)
+	assert.Nil(err)
+	secondary, err := NewBigCacheStore(time.Minute)
+	assert.Nil(err)
+
 	fns := []CacheOption{
-		CacheCleanWindowOption(time.Minute),
-		CacheMaxEntrySizeOption(512),
-		CacheHardMaxCacheSizeOption(1024 * 1024),
-		CacheOnRemoveOption(func(key string) {
-		}),
 		CacheKeyPrefixOption("prefix"),
 		CacheZSTDOption(10, 1),
+		CacheStoreOption(store),
+		CacheSecondaryStoreOption(secondary),
 		CacheMultiTTLOption([]time.Duration{
 			time.Second,
 			2 * time.Second,
@@ -41,13 +43,33 @@ func TestCacheOption(t *testing.T) {
 		fn(&opt)
 	}
 	assert.Equal("prefix", opt.keyPrefix)
-	assert.Equal(time.Minute, opt.cleanWindow)
-	assert.Equal(512, opt.maxEntrySize)
-	assert.Equal(1024*1024, opt.hardMaxCacheSize)
-	assert.NotNil(opt.onRemove)
 	assert.NotNil(opt.compressor)
+	assert.Equal(store, opt.store)
+	assert.Equal(secondary, opt.secondaryStore)
 	assert.Equal([]time.Duration{
 		time.Second,
 		2 * time.Second,
 	}, opt.ttlList)
+}
+
+func TestBigCacheOption(t *testing.T) {
+	assert := assert.New(t)
+
+	fns := []BigCacheOption{
+		BigCacheCleanWindowOption(time.Minute),
+		BigCacheMaxEntrySizeOption(512),
+		BigCacheHardMaxCacheSizeOption(1024 * 1024),
+		BigCacheShardsOption(16),
+		BigCacheOnRemoveOption(func(key string) {
+		}),
+	}
+	opt := bigCacheOptions{}
+	for _, fn := range fns {
+		fn(&opt)
+	}
+	assert.Equal(time.Minute, opt.cleanWindow)
+	assert.Equal(512, opt.maxEntrySize)
+	assert.Equal(1024*1024, opt.hardMaxCacheSize)
+	assert.Equal(16, opt.shards)
+	assert.NotNil(opt.onRemove)
 }

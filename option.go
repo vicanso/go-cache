@@ -18,56 +18,19 @@ import (
 	"time"
 )
 
+// Option holds the configuration of Cache itself. Store specific settings
+// (e.g. bigcache's shards or size limits) belong to the store constructor,
+// such as NewBigCacheStore, and are passed in via CacheStoreOption.
 type Option struct {
-	store            Store
-	secondaryStore   Store
-	keyPrefix        string
-	ttlList          []time.Duration
-	cleanWindow      time.Duration
-	maxEntrySize     int
-	hardMaxCacheSize int
-	shards           int
-	compressor       Compressor
-	onRemove         func(key string)
+	store          Store
+	secondaryStore Store
+	keyPrefix      string
+	ttlList        []time.Duration
+	compressor     Compressor
 }
 
 // CacheOption cache option
 type CacheOption func(opt *Option)
-
-// CacheCleanWindowOption set clean window for bigcache store
-func CacheCleanWindowOption(cleanWindow time.Duration) CacheOption {
-	return func(opt *Option) {
-		opt.cleanWindow = cleanWindow
-	}
-}
-
-// CacheMaxEntrySizeOption set max entry size for bigcache store
-func CacheMaxEntrySizeOption(maxEntrySize int) CacheOption {
-	return func(opt *Option) {
-		opt.maxEntrySize = maxEntrySize
-	}
-}
-
-// CacheHardMaxCacheSizeOption set hard max cache size for bigcache store
-func CacheHardMaxCacheSizeOption(hardMaxCacheSize int) CacheOption {
-	return func(opt *Option) {
-		opt.hardMaxCacheSize = hardMaxCacheSize
-	}
-}
-
-// CacheShardsOption set shards for bigcache store
-func CacheShardsOption(shards int) CacheOption {
-	return func(opt *Option) {
-		opt.shards = shards
-	}
-}
-
-// CacheOnRemoveOption set on remove function for bigcache store
-func CacheOnRemoveOption(onRemove func(key string)) CacheOption {
-	return func(opt *Option) {
-		opt.onRemove = onRemove
-	}
-}
 
 // CacheKeyPrefixOption set key prefix for store
 func CacheKeyPrefixOption(keyPrefix string) CacheOption {
