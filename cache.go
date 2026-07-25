@@ -281,10 +281,17 @@ func (c *Cache) setBytes(ctx context.Context, key string, value []byte, ttls ...
 	}
 	// Best-effort multi-write: each store gets its own clone and TTL/timestamp.
 	// Failure on a later store does not roll back earlier stores.
+	// data由本函数新分配且不再被复用，最后一个store可直接接管，
+	// 因此单store(常见场景)时无需任何克隆。
+	now := time.Now()
+	last := len(c.stores) - 1
 	for index, s := range c.stores {
 		ttl := c.getTTL(index, ttls...)
-		entry := append([]byte(nil), data...)
-		writeTimeToBytes(time.Now().Add(ttl), entry)
+		entry := data
+		if index != last {
+			entry = append([]byte(nil), data...)
+		}
+		writeTimeToBytes(now.Add(ttl), entry)
 		err := s.Set(ctx, key, entry, ttl)
 		if err != nil {
 			return err
@@ -341,18 +348,22 @@ func (c *Cache) GetAndTTL(ctx context.Context, key string, value any) (time.Dura
 	return ttl, nil
 }
 
-// Delete deletes all the data from all stores
+// Delete deletes the data from all stores. Deleting an absent key is a no-op:
+// ErrNotFound from a store is not reported (stores differ on whether they
+// signal a missing key). Every store is attempted even when one fails, and the
+// last non-nil error is returned.
 func (c *Cache) Delete(ctx context.Context, key string) error {
 	key, err := c.getKey(key)
 	if err != nil {
 		return err
 	}
+	var lastErr error
 	for _, s := range c.stores {
+		// 无论是否出错均继续删除其它store
 		e := s.Delete(ctx, key)
-		// 无论是否出错均继续删除
-		if e != nil {
-			err = e
+		if e != nil && !errors.Is(e, ErrNotFound) {
+			lastErr = e
 		}
 	}
-	return err
+	return lastErr
 }

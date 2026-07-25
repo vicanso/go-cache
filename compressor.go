@@ -15,9 +15,15 @@
 package cache
 
 import (
+	"errors"
+
 	"github.com/golang/snappy"
 	"github.com/klauspost/compress/zstd"
 )
+
+// errCompressorFuncNil is returned when a custom compressor is used without
+// the required Encode/Decode function.
+var errCompressorFuncNil = errors.New("compressor encode/decode function is nil")
 
 // Compressor is the interface that support
 // encode and decode function for compression.
@@ -47,12 +53,6 @@ type CompressorOption struct {
 	Decode func(data []byte) ([]byte, error)
 }
 
-func snappyEncode(data []byte) ([]byte, error) {
-	// Pre-size to MaxEncodedLen so Encode does not reallocate.
-	dst := make([]byte, snappy.MaxEncodedLen(len(data)))
-	return snappy.Encode(dst, data), nil
-}
-
 func snappyDecode(data []byte) ([]byte, error) {
 	n, err := snappy.DecodedLen(data)
 	if err != nil {
@@ -66,7 +66,14 @@ type compressor struct {
 	minCompressLength int
 	encode            func(data []byte) ([]byte, error)
 	decode            func(data []byte) ([]byte, error)
-	close             func() error
+	// encodeAppend 将压缩结果追加到dst尾部并返回扩展后的slice。
+	// 内置压缩器均实现该函数，使encodeWithPrefix可以一次分配出
+	// [调用方前缀][压缩标志][压缩数据]，省去一次整段拷贝。
+	encodeAppend func(dst, data []byte) ([]byte, error)
+	// maxEncodedLen 返回压缩后长度上限，仅用于预分配容量，
+	// 返回值偏小不影响正确性(append会自行扩容)。
+	maxEncodedLen func(n int) int
+	close         func() error
 }
 
 func (c *compressor) Encode(data []byte) ([]byte, error) {
@@ -83,18 +90,32 @@ type prefixEncoder interface {
 // encodeWithPrefix 在结果头部预留prefixLen字节空位，其后为1字节
 // 压缩标志与(可选压缩的)数据。
 func (c *compressor) encodeWithPrefix(prefixLen int, data []byte) ([]byte, error) {
-	compressType := CompressNone
-	if c.Match(len(data)) {
-		buf, err := c.encode(data)
-		if err != nil {
-			return nil, err
-		}
-		data = buf
-		compressType = Compressed
+	if !c.Match(len(data)) {
+		out := make([]byte, prefixLen+1+len(data))
+		out[prefixLen] = CompressNone
+		copy(out[prefixLen+1:], data)
+		return out, nil
 	}
-	out := make([]byte, prefixLen+1+len(data))
-	out[prefixLen] = compressType
-	copy(out[prefixLen+1:], data)
+	// 压缩器支持追加写入时，直接压缩到预留了前缀与标志位的buffer中
+	if c.encodeAppend != nil {
+		size := len(data)
+		if c.maxEncodedLen != nil {
+			size = c.maxEncodedLen(size)
+		}
+		out := make([]byte, prefixLen+1, prefixLen+1+size)
+		out[prefixLen] = Compressed
+		return c.encodeAppend(out, data)
+	}
+	if c.encode == nil {
+		return nil, errCompressorFuncNil
+	}
+	buf, err := c.encode(data)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, prefixLen+1+len(buf))
+	out[prefixLen] = Compressed
+	copy(out[prefixLen+1:], buf)
 	return out, nil
 }
 
@@ -105,6 +126,9 @@ func (c *compressor) Decode(data []byte) ([]byte, error) {
 	compressType := data[0]
 	data = data[1:]
 	if compressType != CompressNone {
+		if c.decode == nil {
+			return nil, errCompressorFuncNil
+		}
 		buf, err := c.decode(data)
 		if err != nil {
 			return nil, err
@@ -144,12 +168,18 @@ func NewZSTDCompressor(minCompressLength, level int) Compressor {
 	decoder, decErr := zstd.NewReader(nil)
 	return &compressor{
 		minCompressLength: minCompressLength,
-		encode: func(data []byte) ([]byte, error) {
+		// EncodeAll 本身即为append语义，可直接写入预留了前缀的buffer
+		encodeAppend: func(dst, data []byte) ([]byte, error) {
 			if encErr != nil {
 				return nil, encErr
 			}
-			dst := make([]byte, 0, len(data))
 			return encoder.EncodeAll(data, dst), nil
+		},
+		maxEncodedLen: func(n int) int {
+			if encErr != nil {
+				return n
+			}
+			return encoder.MaxEncodedSize(n)
 		},
 		decode: func(data []byte) ([]byte, error) {
 			if decErr != nil {
@@ -172,37 +202,16 @@ func NewZSTDCompressor(minCompressLength, level int) Compressor {
 // NewSnappyCompressor creates a snappy compressor with a single-allocation
 // encodeWithPrefix path (timestamp prefix + compress flag + body).
 func NewSnappyCompressor(minCompressLength int) Compressor {
-	return &snappyCompressor{
-		compressor: compressor{
-			minCompressLength: minCompressLength,
-			encode:            snappyEncode,
-			decode:            snappyDecode,
+	return &compressor{
+		minCompressLength: minCompressLength,
+		// snappy.Encode 无append语义，改为写入dst尾部的空闲容量，
+		// 容量由maxEncodedLen保证充足
+		encodeAppend: func(dst, data []byte) ([]byte, error) {
+			n := len(dst)
+			encoded := snappy.Encode(dst[n:cap(dst)], data)
+			return dst[:n+len(encoded)], nil
 		},
+		maxEncodedLen: snappy.MaxEncodedLen,
+		decode:        snappyDecode,
 	}
-}
-
-// snappyCompressor enables writing snappy output directly into a buffer that
-// already reserves the caller's prefix and the 1-byte compress flag.
-type snappyCompressor struct {
-	compressor
-}
-
-// Encode routes through the snappy-optimized encodeWithPrefix (embedding would
-// otherwise call compressor.encodeWithPrefix and lose the single-alloc path).
-func (c *snappyCompressor) Encode(data []byte) ([]byte, error) {
-	return c.encodeWithPrefix(0, data)
-}
-
-func (c *snappyCompressor) encodeWithPrefix(prefixLen int, data []byte) ([]byte, error) {
-	if !c.Match(len(data)) {
-		out := make([]byte, prefixLen+1+len(data))
-		out[prefixLen] = CompressNone
-		copy(out[prefixLen+1:], data)
-		return out, nil
-	}
-	max := snappy.MaxEncodedLen(len(data))
-	out := make([]byte, prefixLen+1+max)
-	out[prefixLen] = Compressed
-	encoded := snappy.Encode(out[prefixLen+1:prefixLen+1+max], data)
-	return out[:prefixLen+1+len(encoded)], nil
 }

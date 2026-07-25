@@ -17,6 +17,7 @@ package cache
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -59,7 +60,7 @@ func TestCacheGetKey(t *testing.T) {
 func TestCacheGetSet(t *testing.T) {
 	assert := assert.New(t)
 
-	c, err := New(1 * time.Second)
+	c, err := New(100 * time.Millisecond)
 	assert.Nil(err)
 	defer c.Close(context.Background()) //nolint:errcheck
 
@@ -91,7 +92,8 @@ func TestCacheGetSet(t *testing.T) {
 	err = c.Get(context.Background(), "abc", nil)
 	assert.Equal(ErrIsNil, err)
 
-	time.Sleep(2 * time.Second)
+	// 逻辑过期由内嵌时间戳判定，无需等待秒级
+	time.Sleep(200 * time.Millisecond)
 	err = c.Get(context.Background(), keyCustom, nil)
 	assert.Equal(ErrIsNil, err)
 }
@@ -191,7 +193,7 @@ func TestCacheMultiTTL(t *testing.T) {
 		CacheStoreOption(s1),
 		CacheSecondaryStoreOption(s2),
 		CacheMultiTTLOption([]time.Duration{
-			time.Second,
+			100 * time.Millisecond,
 			10 * time.Minute,
 		}),
 	)
@@ -206,7 +208,8 @@ func TestCacheMultiTTL(t *testing.T) {
 	assert.Nil(err)
 	assert.Equal(value, result)
 	assert.NotEmpty(ttl)
-	time.Sleep(2 * time.Second)
+	// 一级缓存逻辑过期后应回落到二级缓存并回填
+	time.Sleep(200 * time.Millisecond)
 	_, ttl, err = c.GetBytesAndTTL(context.Background(), key)
 	assert.Nil(err)
 	assert.Equal(value, result)
@@ -446,6 +449,37 @@ func TestNewUsesPrimaryTTLForBigcache(t *testing.T) {
 	assert.True(errors.Is(err, ErrNotFound))
 }
 
+// 删除不存在的key应视为成功，不同store对缺失key的返回不一致
+// (bigcache返回错误，redis不返回)，Cache需统一屏蔽
+func TestCacheDeleteNotExists(t *testing.T) {
+	assert := assert.New(t)
+
+	s1, err := newBigCacheStore(time.Minute, &Option{})
+	assert.Nil(err)
+	s2, err := newBigCacheStore(time.Minute, &Option{})
+	assert.Nil(err)
+
+	c, err := New(
+		time.Minute,
+		CacheStoreOption(s1),
+		CacheSecondaryStoreOption(s2),
+	)
+	assert.Nil(err)
+	defer c.Close(context.Background()) //nolint:errcheck
+
+	key := randomString()
+	assert.Nil(c.Delete(context.Background(), key))
+
+	// 只有一级缓存存在时，删除同样不应出错
+	assert.Nil(s1.Set(context.Background(), key, make([]byte, timestampByteSize), time.Minute))
+	assert.Nil(c.Delete(context.Background(), key))
+	_, err = s1.Get(context.Background(), key)
+	assert.True(errors.Is(err, ErrNotFound))
+
+	// store本身仍需暴露ErrNotFound
+	assert.True(errors.Is(s1.Delete(context.Background(), key), ErrNotFound))
+}
+
 func BenchmarkBigcache(b *testing.B) {
 	c, _ := New(time.Minute, CacheHardMaxCacheSizeOption(1))
 	for range b.N {
@@ -455,4 +489,32 @@ func BenchmarkBigcache(b *testing.B) {
 			panic(err)
 		}
 	}
+}
+
+func benchmarkSetBytes(b *testing.B, opts ...CacheOption) {
+	c, err := New(time.Minute, opts...)
+	if err != nil {
+		panic(err)
+	}
+	defer c.Close(context.Background()) //nolint:errcheck
+	value := []byte(strings.Repeat("go-cache benchmark payload ", 16))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if err := c.SetBytes(context.Background(), "key", value); err != nil {
+			panic(err)
+		}
+	}
+}
+
+func BenchmarkSetBytes(b *testing.B) {
+	benchmarkSetBytes(b)
+}
+
+func BenchmarkSetBytesSnappy(b *testing.B) {
+	benchmarkSetBytes(b, CacheSnappyOption(50))
+}
+
+func BenchmarkSetBytesZSTD(b *testing.B) {
+	benchmarkSetBytes(b, CacheZSTDOption(50, 1))
 }

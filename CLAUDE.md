@@ -42,6 +42,7 @@ Constructed via `New(ttl, opts...)`. Configuration is functional-options only (`
 - **Timestamp prefix is the core trick**: every value written by `Cache` is prefixed with an 8-byte big-endian `UnixNano` expiry (`time.go`, `timestampByteSize = 8`). This is how per-key TTL works *across* stores even though **bigcache only supports one instance-wide TTL**. `getBytes` recomputes remaining TTL from this and skips already-expired entries.
 - **Per-level TTL**: `CacheMultiTTLOption([]time.Duration{...})` sets a different TTL per store index; `getTTL(index, ttl...)` resolves it, with an explicit call-site `ttl` argument overriding.
 - **Miss error**: `ErrNotFound` (alias of historical `ErrIsNil`).
+- **Delete is a no-op on a missing key**: stores disagree (bigcache errors, redis does not), so `Cache.Delete` swallows `ErrNotFound`, tries every store, and returns the last other error.
 - **Generics**: package-level `Get[T](ctx, c, key)` returns `*T`; the method `Get` unmarshals into a caller-provided value.
 
 ### `RedisCache` (redis_cache.go) — direct redis helpers
@@ -57,8 +58,9 @@ Minimal `Get`/`Set`/`Destroy` over redis for use as an `elton` session backend. 
 
 ### Shared pieces
 
-- **`Store` interface (store.go)**: `Set`/`Get`/`Delete`/`Close`. Implementations: `bigCacheStore` (default; 8 shards) and `redisStore`. Miss → `ErrNotFound`. `NewRedisStore` does **not** close the client; `NewRedisStoreOwned` does.
-- **`Compressor` interface (compressor.go)**: snappy/zstd via `NewSnappyCompressor`/`NewZSTDCompressor` (or `CacheSnappyOption`/`CacheZSTDOption`). Optional `Closer` (zstd) is closed from `Cache.Close`. Snappy uses `MaxEncodedLen` / single-alloc `encodeWithPrefix`. Compression sits *inside* `Cache` and wraps the value before the timestamp prefix is added.
+- **`Store` interface (store.go)**: `Set`/`Get`/`Delete`/`Close`. Implementations: `bigCacheStore` (default; 8 shards) and `redisStore`. Miss → `ErrNotFound` (both `Get` and `Delete`). `NewRedisStore` does **not** close the client; `NewRedisStoreOwned` does.
+- **`Compressor` interface (compressor.go)**: snappy/zstd via `NewSnappyCompressor`/`NewZSTDCompressor` (or `CacheSnappyOption`/`CacheZSTDOption`). Optional `Closer` (zstd) is closed from `Cache.Close`. Compression sits *inside* `Cache` and wraps the value before the timestamp prefix is added.
+  - **Single-allocation write path**: the unexported `prefixEncoder.encodeWithPrefix(prefixLen, data)` builds `[timestamp][flag][body]` in one buffer. Built-in compressors supply `encodeAppend` (+ optional `maxEncodedLen`) so the compressor writes straight into the reserved buffer — zstd via `EncodeAll`'s append semantics, snappy via `dst[len:cap]` sized by `MaxEncodedLen`. A custom `NewCompressor` with only `Encode`/`Decode` falls back to compress-then-copy. `Cache.setBytes` hands the buffer to the last store uncloned, so a single-store `SetBytes` is 1 alloc.
 - **marshal/unmarshal (marshaler.go, unmarshaler.go)**: JSON by default. A value may implement `Marshaler`/`Unmarshaler` to override, and `*bytes.Buffer` is special-cased to pass raw bytes through without JSON.
 
 ## Conventions

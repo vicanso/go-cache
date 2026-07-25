@@ -16,6 +16,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -32,7 +33,7 @@ func (rs *redisStore) Set(ctx context.Context, key string, value []byte, ttl tim
 
 func (rs *redisStore) Get(ctx context.Context, key string) ([]byte, error) {
 	data, err := rs.client.Get(ctx, key).Bytes()
-	if err == redis.Nil {
+	if errors.Is(err, redis.Nil) {
 		err = ErrNotFound
 	}
 	return data, err

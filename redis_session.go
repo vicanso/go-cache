@@ -16,6 +16,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -53,7 +54,7 @@ func (rs *RedisSession) Get(ctx context.Context, key string) ([]byte, error) {
 	}
 	result, err := rs.client.Get(ctx, key).Bytes()
 	// 如果查询失败，返回空，redis session针对获取不到的不需要直接返回出错
-	if err == redis.Nil {
+	if errors.Is(err, redis.Nil) {
 		err = nil
 	}
 	return result, err

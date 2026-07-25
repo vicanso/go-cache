@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -104,7 +105,7 @@ func newLockToken() (string, error) {
 }
 
 func mapRedisNil(err error) error {
-	if err == redis.Nil {
+	if errors.Is(err, redis.Nil) {
 		return ErrNotFound
 	}
 	return err
@@ -231,7 +232,7 @@ func (c *RedisCache) GetIgnoreNilErr(ctx context.Context, key string) ([]byte, e
 		return nil, err
 	}
 	result, err := c.getBytes(ctx, key)
-	if err != nil && err != ErrNotFound {
+	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}
 	return result, nil

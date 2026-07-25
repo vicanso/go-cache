@@ -16,6 +16,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/allegro/bigcache/v3"
@@ -37,8 +38,8 @@ func (bcs *bigCacheStore) Get(_ context.Context, key string) ([]byte, error) {
 		return nil, ErrKeyIsNil
 	}
 	buf, err := bcs.client.Get(key)
-	if err == bigcache.ErrEntryNotFound {
-		err = ErrIsNil
+	if errors.Is(err, bigcache.ErrEntryNotFound) {
+		err = ErrNotFound
 	}
 	return buf, err
 }
@@ -47,8 +48,15 @@ func (bcs *bigCacheStore) Close(_ context.Context) error {
 	return bcs.client.Close()
 }
 
+// Delete removes the key. bigcache reports a missing key as an error; it is
+// normalized to ErrNotFound so callers can treat it uniformly with the other
+// stores (redis reports no error for an absent key).
 func (bcs *bigCacheStore) Delete(_ context.Context, key string) error {
-	return bcs.client.Delete(key)
+	err := bcs.client.Delete(key)
+	if errors.Is(err, bigcache.ErrEntryNotFound) {
+		return ErrNotFound
+	}
+	return err
 }
 
 func newBigCacheStore(ttl time.Duration, opt *Option) (Store, error) {
